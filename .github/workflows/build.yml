@@ -23,7 +23,7 @@ jobs:
           distribution: 'graalvm'
           java-version: '21'
 
-    
+      # 安全写入权限（如果确实需要）
       - name: Grant write permission to src-theme
         run: sudo chmod -R a+w src-theme
 
@@ -40,7 +40,7 @@ jobs:
         env:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          # 提取版本信息
+          # 提取版本信息和 archives_base_name
           function gradleprop {
               grep "^${1}=" gradle.properties | cut -d'=' -f2
           }
@@ -50,16 +50,16 @@ jobs:
           export FABRICAPI_VERSION=$(gradleprop 'fabric_version')
           export KOTLIN_VERSION=$(gradleprop 'kotlin_version')
           export FABRIC_KOTLIN_VERSION=$(gradleprop 'fabric_kotlin_version')
-          echo "Version: $LB_VERSION, Minecraft: $MINECRAFT_VERSION"
+          export ARCHIVES_BASE_NAME=$(gradleprop 'archives_base_name')
+          echo "Version: $LB_VERSION, Minecraft: $MINECRAFT_VERSION, BaseName: $ARCHIVES_BASE_NAME"
 
           cd build/libs
-          # 调试：列出当前目录文件（可选）
-          ls -la
+          ls -la   # 调试信息（可保留或删除）
 
-          # 使用 -name 匹配 JAR，避免正则歧义
-          JAR=$(find . -maxdepth 1 -name "liquidbounce-*.jar" | head -n 1)
+          # 动态匹配 JAR 文件
+          JAR=$(find . -maxdepth 1 -name "${ARCHIVES_BASE_NAME}-*.jar" | head -n 1)
           if [ -z "$JAR" ]; then
-            echo "ERROR: No liquidbounce JAR found in build/libs!"
+            echo "ERROR: No ${ARCHIVES_BASE_NAME} JAR found in build/libs!"
             exit 1
           fi
           echo "Found JAR: $JAR"
@@ -69,7 +69,7 @@ jobs:
           zip -r liquidbounce.zip *
           md5sum liquidbounce.zip
 
-          # 转义提交信息中的双引号和换行，防止 curl 解析错误
+          # 转义提交信息中的双引号和换行
           ESCAPED_MSG=$(echo "$COMMIT_MESSAGE" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
 
           curl --connect-timeout 30 -m 300 -X POST -F "artifact=@liquidbounce.zip" \
