@@ -35,6 +35,7 @@ import net.ccbluex.liquidbounce.utils.entity.ping
 import net.ccbluex.netty.http.model.RequestObject
 import net.ccbluex.netty.http.util.httpNoContent
 import net.ccbluex.netty.http.util.httpOk
+import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.effect.StatusEffectInstance
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.ItemStack
@@ -129,6 +130,43 @@ data class PlayerData(
         )
     }
 
+}
+
+
+
+/**
+ * Lightweight target snapshot used by the HUD. Unlike PlayerData this is valid
+ * for every LivingEntity, including animals and hostile mobs.
+ */
+data class TargetData(
+    val name: String,
+    val uuid: String,
+    val type: String,
+    val position: Vec3d,
+    val health: Float,
+    val maxHealth: Float,
+    val absorption: Float,
+    val armor: Int,
+    val armorItems: List<ItemStack> = emptyList()
+) {
+    companion object {
+        @JvmStatic
+        fun fromEntity(entity: LivingEntity) = TargetData(
+            name = if (entity is PlayerEntity) {
+                ModuleNameProtect.replace(entity.nameForScoreboard)
+            } else {
+                entity.displayName.string.ifBlank { entity.type.toString().substringAfterLast('.') }
+            },
+            uuid = entity.uuidAsString,
+            type = net.minecraft.registry.Registries.ENTITY_TYPE.getId(entity.type).toString(),
+            position = entity.pos,
+            health = entity.getActualHealth().fixNaN(),
+            maxHealth = entity.maxHealth.fixNaN().coerceAtLeast(1f),
+            absorption = entity.absorptionAmount.fixNaN().coerceAtLeast(0f),
+            armor = entity.armor.coerceAtMost(20),
+            armorItems = if (entity is PlayerEntity) entity.armorItems.toList() else emptyList()
+        )
+    }
 }
 
 data class PlayerInventoryData(

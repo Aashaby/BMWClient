@@ -49,5 +49,13 @@ export const saveClickGuiColor = async (color: string) => {
 };
 
 export const getClickGuiColor = (): string | null => {
-    return localStorage.getItem("clickgui.color");
+    const current = localStorage.getItem("clickgui.color");
+    if (current) return current;
+
+    // Legacy key used by older themes/clients.
+    const legacy = localStorage.getItem("lb_accentColor");
+    if (legacy) {
+        localStorage.setItem("clickgui.color", legacy);
+    }
+    return legacy;
 };

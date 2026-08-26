@@ -20,6 +20,8 @@
     let configurable: ConfigurableSetting;
     const path = `clickgui.${name}`;
     let hasSettings = false;
+    let settingsWriteQueue = Promise.resolve();
+    let settingsRevision = 0;
 
     onMount(async () => {
         await fetchModuleSettings();
@@ -50,10 +52,19 @@
         hasSettings = configurable.value.length > 0;
     }
 
-    async function updateModuleSettings() {
-        await setModuleSettings(name, configurable);
-        await fetchModuleSettings();
-        window.dispatchEvent(new Event('refreshModules'));
+    function updateModuleSettings() {
+        const revision = ++settingsRevision;
+        settingsWriteQueue = settingsWriteQueue
+            .catch(() => undefined)
+            .then(async () => {
+                await setModuleSettings(name, configurable);
+                // Only the newest write needs a read-back. This prevents rapid
+                // slider/nested-setting changes from racing and overwriting each other.
+                if (revision === settingsRevision) {
+                    await fetchModuleSettings();
+                }
+            });
+        return settingsWriteQueue;
     }
 
     async function toggleModule() {

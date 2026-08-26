@@ -25,7 +25,8 @@ import net.ccbluex.liquidbounce.event.events.GameTickEvent
 import net.ccbluex.liquidbounce.event.events.TargetChangeEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
-import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.game.PlayerData
+import net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.game.TargetData
+import net.ccbluex.liquidbounce.utils.client.mc
 import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.player.PlayerEntity
 
@@ -42,6 +43,9 @@ object CombatManager : EventListener {
 
     // useful for autoblock
     private var pauseBlocking: Int = 0
+    private var hudTarget: LivingEntity? = null
+    private var lastHudSnapshot: TargetData? = null
+    private var hudUpdateTicks = 0
 
     const val PAUSE_COMBAT = 40 // 40 ticks = 2 seconds
     var duringCombat: Int = 0
@@ -83,6 +87,30 @@ object CombatManager : EventListener {
 
     val tickHandler = handler<GameTickEvent> {
         update()
+
+        val trackedTarget = ModuleKillAura.targetTracker.target
+        if (trackedTarget != null && trackedTarget !== hudTarget) {
+            hudTarget = trackedTarget
+            hudUpdateTicks = 0
+        }
+        val target = hudTarget
+        if (target == null || !target.isAlive || target.world !== mc.world) {
+            if (lastHudSnapshot != null) {
+                lastHudSnapshot = null
+                EventManager.callEvent(TargetChangeEvent(null))
+            }
+            hudTarget = null
+            return@handler
+        }
+
+        if (++hudUpdateTicks < 2) return@handler
+        hudUpdateTicks = 0
+
+        val snapshot = TargetData.fromEntity(target)
+        if (snapshot != lastHudSnapshot) {
+            lastHudSnapshot = snapshot
+            EventManager.callEvent(TargetChangeEvent(snapshot))
+        }
     }
 
     @Suppress("unused")
@@ -92,9 +120,11 @@ object CombatManager : EventListener {
         if (entity is LivingEntity && entity.shouldBeAttacked()) {
             duringCombat = PAUSE_COMBAT
 
-            if (entity is PlayerEntity) {
-                EventManager.callEvent(TargetChangeEvent(PlayerData.fromPlayer(entity)))
-            }
+            hudTarget = entity
+            hudUpdateTicks = 0
+            val snapshot = TargetData.fromEntity(entity)
+            lastHudSnapshot = snapshot
+            EventManager.callEvent(TargetChangeEvent(snapshot))
         }
     }
 

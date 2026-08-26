@@ -61,12 +61,17 @@
         }));
         allModules = Object.values(grouped).flat();
         clientInfo = await getClientInfo();
-        for (const cat of Object.keys(grouped)) {
-            for (const mod of grouped[cat]) {
-                const settings = await import("../../integration/rest").then(m => m.getModuleSettings(mod.name));
-                moduleSettingsCount[mod.name] = settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length;
-            }
-        }
+        const settingEntries = await Promise.all(
+            Object.values(grouped).flat().map(async mod => {
+                try {
+                    const settings = await import("../../integration/rest").then(m => m.getModuleSettings(mod.name));
+                    return [mod.name, settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length] as const;
+                } catch {
+                    return [mod.name, 0] as const;
+                }
+            })
+        );
+        moduleSettingsCount = Object.fromEntries(settingEntries);
     }
 
     onMount(async () => {
@@ -79,7 +84,6 @@
 
         window.addEventListener('openClickGui', refreshModules);
         window.addEventListener('refreshModules', refreshModules);
-        window.addEventListener('moduleSettingsChanged', refreshModules);
 
         const modules = await getModules();
         const grouped = groupByCategory(modules);
@@ -99,12 +103,17 @@
         allModules = Object.values(grouped).flat();
         clientInfo = await getClientInfo();
 
-        for (const cat of Object.keys(grouped)) {
-            for (const mod of grouped[cat]) {
-                const settings = await import("../../integration/rest").then(m => m.getModuleSettings(mod.name));
-                moduleSettingsCount[mod.name] = settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length;
-            }
-        }
+        const settingEntries = await Promise.all(
+            Object.values(grouped).flat().map(async mod => {
+                try {
+                    const settings = await import("../../integration/rest").then(m => m.getModuleSettings(mod.name));
+                    return [mod.name, settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length] as const;
+                } catch {
+                    return [mod.name, 0] as const;
+                }
+            })
+        );
+        moduleSettingsCount = Object.fromEntries(settingEntries);
 
         listen("moduleToggle", (e) => {
             for (const cat of Object.keys(modulesByCategory)) {
@@ -120,7 +129,6 @@
     onDestroy(() => {
         window.removeEventListener('openClickGui', refreshModules);
         window.removeEventListener('refreshModules', refreshModules);
-        window.removeEventListener('moduleSettingsChanged', refreshModules);
         unsubscribeAccent();
     });
 
@@ -180,14 +188,30 @@
         }
     }
     async function handleModuleToggle(module: Module) {
-        module.enabled = !module.enabled;
-        if (typeof setModuleEnabled === 'function') {
-            await setModuleEnabled(module.name, module.enabled);
+        const previous = module.enabled;
+        const next = !previous;
+
+        // Optimistic UI update, with rollback if the request fails.
+        const patch = (enabled: boolean) => {
+            modulesByCategory = Object.fromEntries(
+                Object.entries(modulesByCategory).map(([cat, list]) => [
+                    cat,
+                    list.map(m => m.name === module.name ? { ...m, enabled } : m)
+                ])
+            );
+            allModules = allModules.map(m => m.name === module.name ? { ...m, enabled } : m);
+            if (selectedModule?.name === module.name) {
+                selectedModule = { ...selectedModule, enabled };
+            }
+        };
+
+        patch(next);
+        try {
+            await setModuleEnabled(module.name, next);
+        } catch (error) {
+            patch(previous);
+            console.error(`Failed to toggle ${module.name}`, error);
         }
-        const modules = await getModules();
-        const grouped = groupByCategory(modules);
-        modulesByCategory = grouped;
-        allModules = Object.values(grouped).flat();
     }
 
     $: if (selectedCategory) {

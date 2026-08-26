@@ -105,9 +105,6 @@ object ClientRayTraceUtil : MinecraftShortcuts {
 
         val startPos = player.eyePos
         var direction = Vec3d.fromPolar(pitch, yaw)
-        val directionLength = direction.length()
-        if (directionLength < EPSILON) return null
-        val maxRayT = reachDistance / directionLength
         val endPos = startPos!!.add(direction.multiply(reachDistance))
         if (direction.x == 0.0) direction = Vec3d(EPSILON, direction.y, direction.z)
         if (direction.y == 0.0) direction = Vec3d(direction.x, EPSILON, direction.z)
@@ -118,22 +115,33 @@ object ClientRayTraceUtil : MinecraftShortcuts {
         val stepY = sign(direction.y).toInt()
         val stepZ = sign(direction.z).toInt()
 
-        val nextBoundaryX = (if (stepX > 0) currentPos.x + 1 else currentPos.x).toDouble()
-        val nextBoundaryY = (if (stepY > 0) currentPos.y + 1 else currentPos.y).toDouble()
-        val nextBoundaryZ = (if (stepZ > 0) currentPos.z + 1 else currentPos.z).toDouble()
+        val tMaxX = if (stepX == 0) Double.POSITIVE_INFINITY
+        else {
+            val boundary = if (stepX > 0) currentPos.x + 1.0 else currentPos.x.toDouble()
+            (boundary - startPos.x) / direction.x
+        }
+        val tMaxY = if (stepY == 0) Double.POSITIVE_INFINITY
+        else {
+            val boundary = if (stepY > 0) currentPos.y + 1.0 else currentPos.y.toDouble()
+            (boundary - startPos.y) / direction.y
+        }
+        val tMaxZ = if (stepZ == 0) Double.POSITIVE_INFINITY
+        else {
+            val boundary = if (stepZ > 0) currentPos.z + 1.0 else currentPos.z.toDouble()
+            (boundary - startPos.z) / direction.z
+        }
 
-        var tMaxX = (nextBoundaryX - startPos.x) / direction.x
-        var tMaxY = (nextBoundaryY - startPos.y) / direction.y
-        var tMaxZ = (nextBoundaryZ - startPos.z) / direction.z
-
-        val tDeltaX = stepX / direction.x
-        val tDeltaY = stepY / direction.y
-        val tDeltaZ = stepZ / direction.z
+        var nextX = tMaxX
+        var nextY = tMaxY
+        var nextZ = tMaxZ
+        val tDeltaX = if (stepX == 0) Double.POSITIVE_INFINITY else abs(1.0 / direction.x)
+        val tDeltaY = if (stepY == 0) Double.POSITIVE_INFINITY else abs(1.0 / direction.y)
+        val tDeltaZ = if (stepZ == 0) Double.POSITIVE_INFINITY else abs(1.0 / direction.z)
 
         val world = player.world
         var box: Box
-        var currentT = 0.0
-        while (currentT <= maxRayT + EPSILON) {
+        // The direction is normalized, therefore t is world-space distance.
+        while (minOf(nextX, nextY, nextZ) <= reachDistance) {
             if (!world.isAir(currentPos)) {
                 val state = world.getBlockState(currentPos)
                 if (!ignorePredicate.test(state)) {
@@ -160,26 +168,15 @@ object ClientRayTraceUtil : MinecraftShortcuts {
                     }
                 }
             }
-            if (tMaxX < tMaxY) {
-                if (tMaxX < tMaxZ) {
-                    currentT = tMaxX
-                    currentPos = currentPos.add(stepX, 0, 0)
-                    tMaxX += tDeltaX
-                } else {
-                    currentT = tMaxZ
-                    currentPos = currentPos.add(0, 0, stepZ)
-                    tMaxZ += tDeltaZ
-                }
+            if (nextX <= nextY && nextX <= nextZ) {
+                currentPos = currentPos.add(stepX, 0, 0)
+                nextX += tDeltaX
+            } else if (nextY <= nextZ) {
+                currentPos = currentPos.add(0, stepY, 0)
+                nextY += tDeltaY
             } else {
-                if (tMaxY < tMaxZ) {
-                    currentT = tMaxY
-                    currentPos = currentPos.add(0, stepY, 0)
-                    tMaxY += tDeltaY
-                } else {
-                    currentT = tMaxZ
-                    currentPos = currentPos.add(0, 0, stepZ)
-                    tMaxZ += tDeltaZ
-                }
+                currentPos = currentPos.add(0, 0, stepZ)
+                nextZ += tDeltaZ
             }
         }
         return null

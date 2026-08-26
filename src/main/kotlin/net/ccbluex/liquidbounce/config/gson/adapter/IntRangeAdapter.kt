@@ -43,12 +43,21 @@ object IntRangeAdapter : JsonSerializer<IntRange>, JsonDeserializer<IntRange> {
             return IntRange(primitive.asInt, primitive.asInt)
         }
 
+        if (json.isJsonArray && json.asJsonArray.size() >= 2) {
+            return json.asJsonArray[0].asInt..json.asJsonArray[1].asInt
+        }
+
         if (!json.isJsonObject) {
             throw JsonParseException("Expected object, got ${json.javaClass.name}")
         }
 
         val obj = json.asJsonObject
-        return obj["from"].asInt..obj["to"].asInt
+        val from = obj["from"] ?: obj["min"] ?: obj["start"]
+        val to = obj["to"] ?: obj["max"] ?: obj["end"]
+        if (from == null || to == null) {
+            throw JsonParseException("Range must contain from/to or min/max")
+        }
+        return from.asInt..to.asInt
     }
 
 }
