@@ -62,6 +62,13 @@ import kotlin.math.sin
 object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
 
     private data class BlockData(val pos: BlockPos, val facing: Direction)
+    
+    // Placement strategy enum for adaptive behavior
+    private enum class PlacementStrategy {
+        SIMPLE,      // Direct current position based (most reliable)
+        PREDICTED,   // Velocity-aware prediction (for high speed)
+        EMERGENCY    // Survival fallback (anti-fall)
+    }
 
     private enum class Mode(override val choiceName: String) : NamedChoice {
         TELLY("Telly"),
@@ -119,13 +126,11 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
     private var placeCount = 0
     private var ups = 0
     private var lastPlacePitchDiff = 0.0
-
-    // Velocity-aware candidate scoring
-    private data class PlacementCandidate(
-        val pos: BlockPos,
-        val facing: Direction,
-        val score: Double
-    )
+    
+    // Adaptive placement strategy state
+    private var currentStrategy = PlacementStrategy.SIMPLE
+    private var consecutiveFailedPlaces = 0
+    private var lastSuccessfulPlacementPos: BlockPos? = null
 
     override fun onEnabled() {
         placeCount = 0
@@ -141,8 +146,12 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         tellyJumpTicks = 0
         waitingForEagleSneak = false
         rot = null
-        // skipTick removed - dangerous mechanism eliminated
         lastPlacePitchDiff = 0.0
+        
+        // Reset adaptive strategy state
+        currentStrategy = PlacementStrategy.SIMPLE
+        consecutiveFailedPlaces = 0
+        lastSuccessfulPlacementPos = null
     }
 
     override fun onDisabled() {
@@ -366,6 +375,11 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 } else {
                     player.swingHand(this.blockSlot!!.hand)
                 }
+                // Record successful placement for adaptive strategy
+                recordPlacementResult(true)
+            } else {
+                // Record failed placement for adaptive strategy
+                recordPlacementResult(false)
             }
         }
     }
@@ -410,6 +424,9 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         
         // Removed old position-based search that was conflicting with prediction logic
         // This was causing placement to revert to current position after some time
+        
+        // Adaptive strategy selection based on current conditions
+        updatePlacementStrategy()
 
 
         if (mode == Mode.NORMAL) {
@@ -430,24 +447,19 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 player.inventory.selectedSlot = this.blockSlot!!.slot
             }
         }
+        // Adaptive placement execution based on strategy
+        val placement: BlockData? = when (currentStrategy) {
+            PlacementStrategy.SIMPLE -> getSimplePlacement()
+            PlacementStrategy.PREDICTED -> getPredictedPlacement()
+            PlacementStrategy.EMERGENCY -> getEmergencyPlacement()
+        }
+        
         // One simulation pass gives us the two-tick prediction and avoids duplicate physics work.
         val predictedState = simulatePlayerMovement(ticks = 2)
         val predictedPos = predictedState.position
         val predictedY = predictedPos.y
         var reachable = true
         val nextEyePos = predictedPos.add(0.0, player.standingEyeHeight.toDouble(), 0.0)
-        
-        // Use fully predicted position (X, Y, Z) for placement search
-        val predictedBlockX = floor(predictedPos.x).toInt()
-        val predictedBlockZ = floor(predictedPos.z).toInt()
-        
-        // Primary: predicted position, Secondary: velocity-aware fallback only
-        // Removed current position fallback to prevent reverting to old behavior
-        val placement: BlockData? = getBlockData(
-            BlockPos(predictedBlockX, player.blockY - 1, predictedBlockZ),
-            predictedBlockX,
-            predictedBlockZ
-        ) ?: getVelocityAwareFallback(predictedPos, player.blockY - 1)
         var forceRotation = false
         if (placement != null) {
             if (safeMode && testOnGround && player.onGroundTicks == 1 && mc.options.jumpKey.isPressed) {
@@ -642,40 +654,25 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
     }
 
     private fun getBlockPos(): BlockPos? {
+        // Simplified approach: find nearest solid block for basic support
         val px = player.blockX
         val py = player.blockY
         val pz = player.blockZ
 
-        // Get velocity direction for velocity-aware search
-        val velX = player.velocity.x
-        val velZ = player.velocity.z
-        val speed = kotlin.math.sqrt(velX * velX + velZ * velZ)
-        
-        // Normalize velocity for direction
-        val dirX = if (speed > 0.001) velX / speed else 0.0
-        val dirZ = if (speed > 0.001) velZ / speed else 0.0
-        
-        // Get predicted position for better scoring (reuse prediction to avoid duplication)
-        val predictedState = simulatePlayerMovement(ticks = 1)
-        val predictedPos = predictedState.position
-        val predX = floor(predictedPos.x).toInt()
-        val predZ = floor(predictedPos.z).toInt()
-
         var best: BlockPos? = null
-        var bestScore = Double.NEGATIVE_INFINITY
+        var bestDistance = Double.POSITIVE_INFINITY
 
-        // Search range - same envelope but velocity-aware scoring
-        for (x in 5 downTo -4) {
-            for (y in 5 downTo -4) {
+        // Limited search range for performance and reliability
+        for (x in 3 downTo -2) {
+            for (y in 3 downTo -2) {
                 if (py + y >= py) continue
-                for (z in 5 downTo -4) {
+                for (z in 3 downTo -2) {
                     val pos = BlockPos(px + x, py + y, pz + z)
                     if (!isPosSolid(pos)) continue
                     
-                    // Multi-factor scoring instead of simple distance
-                    val score = scorePlacementCandidate(pos, px, py, pz, predX, predZ, dirX, dirZ, speed)
-                    if (score > bestScore) {
-                        bestScore = score
+                    val distance = pos.getSquaredDistance(px.toDouble(), py.toDouble(), pz.toDouble())
+                    if (distance < bestDistance) {
+                        bestDistance = distance
                         best = pos
                     }
                 }
@@ -684,35 +681,7 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return best
     }
 
-    private fun scorePlacementCandidate(
-        pos: BlockPos, 
-        px: Int, py: Int, pz: Int,
-        predX: Int, predZ: Int,
-        dirX: Double, dirZ: Double, 
-        speed: Double
-    ): Double {
-        // Distance from predicted player position (more accurate for reach)
-        val predictedDist = pos.getSquaredDistance(predX.toDouble(), py.toDouble(), predZ.toDouble())
-        
-        // Direction alignment: how well this position aligns with movement direction
-        val deltaX = (pos.x - predX).toDouble()
-        val deltaZ = (pos.z - predZ).toDouble()
-        val directionScore = if (speed > 0.1) {
-            // Dot product for direction alignment
-            (deltaX * dirX + deltaZ * dirZ) / (kotlin.math.sqrt(deltaX * deltaX + deltaZ * deltaZ) + 0.001)
-        } else 0.0
-        
-        // Distance penalty: closer is better, but direction alignment matters more
-        val distancePenalty = predictedDist * 0.5
-        
-        // Height preference: prefer same level or slightly below
-        val deltaY = (pos.y - py).toDouble()
-        val heightScore = if (deltaY <= 0) 0.0 else deltaY * 2.0
-        
-        // Combined score: higher is better
-        // Direction alignment (positive for forward positions) - distance penalty - height penalty
-        return directionScore * 10.0 - distancePenalty - heightScore
-    }
+    // Removed complex scoring function - adaptive strategy handles selection instead
 
     private fun isAirBlock(blockPos: BlockPos?): Boolean {
         return blockPos != null && ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(blockPos))
@@ -834,4 +803,111 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return maxDistance < safeDistance
     }
 
-}
+    // ========== INNOVATIVE ADAPTIVE PLACEMENT SYSTEM ==========
+    
+    private fun updatePlacementStrategy() {
+        val speed = kotlin.math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z)
+        val isFalling = player.velocity.y < -0.1
+        val isOnGround = player.isOnGround
+        
+        // Strategy selection logic
+        currentStrategy = when {
+            // Emergency: falling or consecutive failures
+            isFalling || consecutiveFailedPlaces >= 3 -> PlacementStrategy.EMERGENCY
+            
+            // Predicted: high speed diagonal movement
+            speed > 0.25 && isDiagonalMovement() -> PlacementStrategy.PREDICTED
+            
+            // Simple: normal conditions - most reliable
+            else -> PlacementStrategy.SIMPLE
+        }
+    }
+    
+    private fun isDiagonalMovement(): Boolean {
+        val velX = kotlin.math.abs(player.velocity.x)
+        val velZ = kotlin.math.abs(player.velocity.z)
+        val speed = kotlin.math.sqrt(velX * velX + velZ * velZ)
+        if (speed < 0.1) return false
+        
+        // Diagonal if both X and Z components are significant (>30% of speed)
+        return velX > speed * 0.3 && velZ > speed * 0.3
+    }
+    
+    private fun getSimplePlacement(): BlockData? {
+        // Most reliable: place directly under current position
+        val targetPos = BlockPos(player.blockX, player.blockY - 1, player.blockZ)
+        return getBlockData(targetPos, player.blockX, player.blockZ)
+    }
+    
+    private fun getPredictedPlacement(): BlockData? {
+        // For high speed: predict ahead along movement direction
+        val velX = player.velocity.x
+        val velZ = player.velocity.z
+        val speed = kotlin.math.sqrt(velX * velX + velZ * velZ)
+        
+        if (speed < 0.1) return getSimplePlacement()
+        
+        // Predict 1-2 ticks ahead based on speed
+        val lookAheadTicks = if (speed > 0.4) 2 else 1
+        val predictedState = simulatePlayerMovement(ticks = lookAheadTicks)
+        val predictedPos = predictedState.position
+        
+        val predBlockX = floor(predictedPos.x).toInt()
+        val predBlockZ = floor(predictedPos.z).toInt()
+        
+        // Try predicted position first
+        val predictedPlacement = getBlockData(
+            BlockPos(predBlockX, player.blockY - 1, predBlockZ),
+            predBlockX,
+            predBlockZ
+        )
+        
+        if (predictedPlacement != null) return predictedPlacement
+        
+        // Fallback to velocity-aware search
+        return getVelocityAwareFallback(predictedPos, player.blockY - 1)
+    }
+    
+    private fun getEmergencyPlacement(): BlockData? {
+        // Anti-fall: try to place anywhere reachable around player
+        val predictedState = simulatePlayerMovement(ticks = 1)
+        val predictedPos = predictedState.position
+        val predBlockX = floor(predictedPos.x).toInt()
+        val predBlockZ = floor(predictedPos.z).toInt()
+        
+        // Priority order for emergency placement
+        val emergencyCandidates = listOf(
+            BlockPos(predBlockX, player.blockY - 1, predBlockZ),    // Below predicted
+            BlockPos(player.blockX, player.blockY - 1, player.blockZ), // Below current
+            BlockPos(predBlockX + 1, player.blockY - 1, predBlockZ),   // Ahead X
+            BlockPos(predBlockX, player.blockY - 1, predBlockZ + 1),   // Ahead Z
+            BlockPos(predBlockX - 1, player.blockY - 1, predBlockZ),   // Behind X
+            BlockPos(predBlockX, player.blockY - 1, predBlockZ - 1),   // Behind Z
+        )
+        
+        for (candidate in emergencyCandidates) {
+            val placement = getBlockData(candidate, predBlockX, predBlockZ)
+            if (placement != null) {
+                return placement
+            }
+        }
+        
+        // Last resort: wider search
+        return getVelocityAwareFallback(predictedPos, player.blockY - 1)
+    }
+    
+    private fun recordPlacementResult(success: Boolean) {
+        if (success) {
+            consecutiveFailedPlaces = 0
+            if (blockData != null) {
+                lastSuccessfulPlacementPos = blockData!!.pos
+            }
+        } else {
+            consecutiveFailedPlaces++
+            if (consecutiveFailedPlaces >= 5) {
+                // Force strategy reset after many failures
+                currentStrategy = PlacementStrategy.SIMPLE
+                consecutiveFailedPlaces = 0
+            }
+        }
+    }
