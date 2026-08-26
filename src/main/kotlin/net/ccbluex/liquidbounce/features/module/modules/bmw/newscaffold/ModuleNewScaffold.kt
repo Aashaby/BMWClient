@@ -407,27 +407,9 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         if (mc.options.jumpKey.isPressed) {
             posY = player.blockY - 1.0
         }
-        val possible: BlockData? = if (ClientRayTraceUtil.isIgnoredBlock(
-                world.getBlockState(
-                    BlockPos(
-                        floor(player.x).toInt(),
-                        floor(player.y).toInt(),
-                        floor(player.z).toInt()
-                    )
-                )
-            )
-        ) getBlockData(
-            BlockPos(
-                floor(player.x).toInt(),
-                posY.toInt(),
-                floor(player.z).toInt()
-            )
-        ) else null
-        if (possible != null) {
-            blockData = possible
-        }
-
-        lastBlockData = possible
+        
+        // Removed old position-based search that was conflicting with prediction logic
+        // This was causing placement to revert to current position after some time
 
 
         if (mode == Mode.NORMAL) {
@@ -459,12 +441,11 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         val predictedBlockX = floor(predictedPos.x).toInt()
         val predictedBlockZ = floor(predictedPos.z).toInt()
         
-        // Primary: predicted position, Secondary: current position, Tertiary: velocity-aware fallback
+        // Primary: predicted position, Secondary: velocity-aware fallback only
+        // Removed current position fallback to prevent reverting to old behavior
         val placement: BlockData? = getBlockData(
             BlockPos(predictedBlockX, player.blockY - 1, predictedBlockZ)
-        ) ?: getVelocityAwareFallback(predictedPos, player.blockY - 1) ?: getBlockData(
-            BlockPos(floor(player.x).toInt(), player.blockY - 1, floor(player.z).toInt())
-        )
+        ) ?: getVelocityAwareFallback(predictedPos, player.blockY - 1)
         var forceRotation = false
         if (placement != null) {
             if (safeMode && testOnGround && player.onGroundTicks == 1 && mc.options.jumpKey.isPressed) {
@@ -488,13 +469,10 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 canPlace = true
                 reachable = false
                 posY = player.blockY - 1.0 // 普通下落自救
+                // Use predicted position for emergency placement instead of current position
                 lastBlockData = getBlockData(
-                    BlockPos(
-                        floor(player.x).toInt(),
-                        floor(posY).toInt(),
-                        floor(player.z).toInt()
-                    )
-                )
+                    BlockPos(predictedBlockX, floor(posY).toInt(), predictedBlockZ)
+                ) ?: getVelocityAwareFallback(predictedPos, floor(posY).toInt())
                 blockData = lastBlockData
             }
         }
