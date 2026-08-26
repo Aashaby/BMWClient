@@ -444,7 +444,9 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         // Primary: predicted position, Secondary: velocity-aware fallback only
         // Removed current position fallback to prevent reverting to old behavior
         val placement: BlockData? = getBlockData(
-            BlockPos(predictedBlockX, player.blockY - 1, predictedBlockZ)
+            BlockPos(predictedBlockX, player.blockY - 1, predictedBlockZ),
+            predictedBlockX,
+            predictedBlockZ
         ) ?: getVelocityAwareFallback(predictedPos, player.blockY - 1)
         var forceRotation = false
         if (placement != null) {
@@ -471,7 +473,9 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 posY = player.blockY - 1.0 // 普通下落自救
                 // Use predicted position for emergency placement instead of current position
                 lastBlockData = getBlockData(
-                    BlockPos(predictedBlockX, floor(posY).toInt(), predictedBlockZ)
+                    BlockPos(predictedBlockX, floor(posY).toInt(), predictedBlockZ),
+                    predictedBlockX,
+                    predictedBlockZ
                 ) ?: getVelocityAwareFallback(predictedPos, floor(posY).toInt())
                 blockData = lastBlockData
             }
@@ -593,14 +597,14 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return bestSlot
     }
 
-    private fun getBlockData(pos: BlockPos): BlockData? {
+    private fun getBlockData(pos: BlockPos, predictedX: Int = player.blockX, predictedZ: Int = player.blockZ): BlockData? {
         val data: BlockData
 
         if (getPos(pos) == null) {
             val blockPos = getBlockPos()
             if (blockPos == null) return null
 
-            val direction = getPlaceSide(blockPos)
+            val direction = getPlaceSide(blockPos, predictedX, predictedZ)
             if (direction == null) return null
 
             data = BlockData(blockPos, direction)
@@ -615,8 +619,10 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return null
     }
 
-    private fun getPlaceSide(blockPos: BlockPos): Direction? {
-        val playerPos = BlockPos(player.blockX, player.blockY, player.blockZ)
+    private fun getPlaceSide(blockPos: BlockPos, predictedX: Int = player.blockX, predictedZ: Int = player.blockZ): Direction? {
+        // Use predicted position for placement side selection instead of current position
+        val playerPos = BlockPos(predictedX, player.blockY, predictedZ)
+        
         var best: Direction? = null
         var bestDistance = Double.POSITIVE_INFINITY
 
@@ -648,6 +654,12 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         // Normalize velocity for direction
         val dirX = if (speed > 0.001) velX / speed else 0.0
         val dirZ = if (speed > 0.001) velZ / speed else 0.0
+        
+        // Get predicted position for better scoring (reuse prediction to avoid duplication)
+        val predictedState = simulatePlayerMovement(ticks = 1)
+        val predictedPos = predictedState.position
+        val predX = floor(predictedPos.x).toInt()
+        val predZ = floor(predictedPos.z).toInt()
 
         var best: BlockPos? = null
         var bestScore = Double.NEGATIVE_INFINITY
@@ -661,7 +673,7 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                     if (!isPosSolid(pos)) continue
                     
                     // Multi-factor scoring instead of simple distance
-                    val score = scorePlacementCandidate(pos, px, py, pz, dirX, dirZ, speed)
+                    val score = scorePlacementCandidate(pos, px, py, pz, predX, predZ, dirX, dirZ, speed)
                     if (score > bestScore) {
                         bestScore = score
                         best = pos
@@ -675,22 +687,23 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
     private fun scorePlacementCandidate(
         pos: BlockPos, 
         px: Int, py: Int, pz: Int,
+        predX: Int, predZ: Int,
         dirX: Double, dirZ: Double, 
         speed: Double
     ): Double {
-        // Distance from current player position (still matters for reach)
-        val currentDist = pos.getSquaredDistance(px.toDouble(), py.toDouble(), pz.toDouble())
+        // Distance from predicted player position (more accurate for reach)
+        val predictedDist = pos.getSquaredDistance(predX.toDouble(), py.toDouble(), predZ.toDouble())
         
         // Direction alignment: how well this position aligns with movement direction
-        val deltaX = (pos.x - px).toDouble()
-        val deltaZ = (pos.z - pz).toDouble()
+        val deltaX = (pos.x - predX).toDouble()
+        val deltaZ = (pos.z - predZ).toDouble()
         val directionScore = if (speed > 0.1) {
             // Dot product for direction alignment
             (deltaX * dirX + deltaZ * dirZ) / (kotlin.math.sqrt(deltaX * deltaX + deltaZ * deltaZ) + 0.001)
         } else 0.0
         
         // Distance penalty: closer is better, but direction alignment matters more
-        val distancePenalty = currentDist * 0.5
+        val distancePenalty = predictedDist * 0.5
         
         // Height preference: prefer same level or slightly below
         val deltaY = (pos.y - py).toDouble()
@@ -793,7 +806,7 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         
         for ((dx, dz) in sortedOffsets) {
             val candidatePos = BlockPos(predictedBlockX + dx, targetY, predictedBlockZ + dz)
-            val blockData = getBlockData(candidatePos)
+            val blockData = getBlockData(candidatePos, predictedBlockX, predictedBlockZ)
             if (blockData != null) {
                 return blockData
             }
