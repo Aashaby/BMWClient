@@ -49,7 +49,6 @@ import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Box
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
-import java.util.function.ToDoubleFunction
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
@@ -60,6 +59,17 @@ import kotlin.math.sin
  */
 @Suppress("unused")
 object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
+
+    private val rejectedSupportBlocks: Set<Block> = setOf(
+        Blocks.ANVIL, Blocks.AIR, Blocks.WATER, Blocks.FIRE, Blocks.LAVA, Blocks.SKELETON_SKULL,
+        Blocks.OAK_SIGN, Blocks.TRAPPED_CHEST, Blocks.CHEST, Blocks.ENCHANTING_TABLE,
+        Blocks.ENDER_CHEST, Blocks.CRAFTING_TABLE, Blocks.DAYLIGHT_DETECTOR, Blocks.COBWEB,
+        Blocks.SHORT_GRASS, Blocks.FLOWER_POT, Blocks.CHORUS_FLOWER, Blocks.SUNFLOWER,
+        Blocks.CORNFLOWER, Blocks.TORCHFLOWER, Blocks.OAK_BUTTON, Blocks.ACACIA_BUTTON,
+        Blocks.BIRCH_BUTTON, Blocks.CRIMSON_BUTTON, Blocks.CHERRY_BUTTON, Blocks.DARK_OAK_BUTTON,
+        Blocks.JUNGLE_BUTTON, Blocks.STONE_BUTTON, Blocks.WARPED_BUTTON, Blocks.SPRUCE_BUTTON,
+        Blocks.NOTE_BLOCK, Blocks.PLAYER_HEAD
+    )
 
     private data class BlockData(val pos: BlockPos, val facing: Direction)
 
@@ -441,11 +451,11 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         if (this.blockSlot!!.hand == Hand.MAIN_HAND) {
             player.inventory.selectedSlot = this.blockSlot!!.slot
         }
-        val simResult1 = simulatePlayerMovement(ticks = 1) // 玩家预测
+        val simulation = simulatePlayerMovement(ticks = 2)
         var reachable = true
-        val nextEyePos: Vec3d = simResult1.position.add(0.0, player.standingEyeHeight.toDouble(), 0.0) // 1tick后的eye pos
-        val simResult2 = simulatePlayerMovement(ticks = 2) // 再预测2tick
-        val predictedY = simResult2.position.y // 2tick后的Y坐标
+        val nextEyePos = (simulation.firstTickPosition ?: simulation.position)
+            .add(0.0, player.standingEyeHeight.toDouble(), 0.0)
+        val predictedY = simulation.position.y
         val placement: BlockData? = getBlockData(
             BlockPos(
                 floor(player.x).toInt(), (player.blockY - 1), floor(
@@ -624,153 +634,88 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
     }
 
     private fun getPlaceSide(blockPos: BlockPos): Direction? {
-        val blockData = ArrayList<BlockData>()
+        val playerPos = BlockPos(player.blockX, player.blockY, player.blockZ)
+        var bestFacing: Direction? = null
+        var bestDistance = Double.POSITIVE_INFINITY
 
-        val pos = BlockPos(
-            floor(player.x).toInt(),
-            floor(player.y).toInt(),
-            floor(player.z).toInt()
-        )
-
-        if (isAirBlock(blockPos.east()) && blockPos.east() != pos) {
-            blockData.add(BlockData(blockPos.east(), Direction.EAST))
-        }
-
-        if (isAirBlock(blockPos.north()) && blockPos.north() != pos) {
-            blockData.add(BlockData(blockPos.north(), Direction.NORTH))
-        }
-
-        if (isAirBlock(blockPos.south()) && blockPos.south() != pos) {
-            blockData.add(BlockData(blockPos.south(), Direction.SOUTH))
-        }
-
-        if (isAirBlock(blockPos.west()) && blockPos.west() != pos) {
-            blockData.add(BlockData(blockPos.west(), Direction.WEST))
-        }
-
-        if (blockData.isEmpty()) return null
-
-        blockData.sortWith(Comparator.comparingDouble { vec3: BlockData ->
-            vec3.pos.getSquaredDistance(pos)
-        })
-
-        blockData.removeIf { blockData1: BlockData ->
-            !ClientRayTraceUtil.isIgnoredBlock(
-                world.getBlockState(
-                    blockData1.pos.offset(blockData1.facing)
-                )
-            )
-        }
-
-        return blockData.firstOrNull()?.facing
-    }
-
-
-    private fun getBlockPos(): BlockPos? {
-        val playerPos = BlockPos(
-            floor(player.x).toInt(),
-            floor(player.y).toInt(),
-            floor(player.z).toInt()
-        )
-
-        val positions = ArrayList<BlockPos?>()
-
-        val searchBlock = searchBlocks()
-        for (block in searchBlock.entries) {
-            if (isPosSolid(block.key)) {
-                positions.add(block.key)
+        fun consider(facing: Direction) {
+            val candidate = blockPos.offset(facing)
+            if (candidate == playerPos || !isAirBlock(candidate)) return
+            if (!ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(candidate.offset(facing)))) return
+            val dx = candidate.x - playerPos.x
+            val dy = candidate.y - playerPos.y
+            val dz = candidate.z - playerPos.z
+            val distance = (dx * dx + dy * dy + dz * dz).toDouble()
+            if (distance < bestDistance) {
+                bestDistance = distance
+                bestFacing = facing
             }
         }
 
-        positions.removeIf { pos: BlockPos? -> pos!!.y >= playerPos.y }
-
-        if (positions.isEmpty()) return null
-
-        positions.sortWith(Comparator.comparingDouble<BlockPos?>(ToDoubleFunction { vec3: BlockPos? ->
-            vec3!!.getSquaredDistance(
-                playerPos
-            )
-        }))
-
-        return positions.first()
+        consider(Direction.EAST)
+        consider(Direction.NORTH)
+        consider(Direction.SOUTH)
+        consider(Direction.WEST)
+        return bestFacing
     }
 
-    private fun isAirBlock(blockPos: BlockPos?): Boolean {
-        return ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(blockPos))
-    }
+    private fun getBlockPos(
+        centerX: Int = player.blockX,
+        centerY: Int = player.blockY,
+        centerZ: Int = player.blockZ,
+        minYDelta: Int = -4,
+        maxYDelta: Int = -1,
+        radius: Int = 5
+    ): BlockPos? {
+        var best: BlockPos? = null
+        var bestDistance = Double.POSITIVE_INFINITY
 
-    private fun getBlock(pos: BlockPos?): Block {
-        return world.getBlockState(pos).block
-    }
-
-    private fun searchBlocks(): MutableMap<BlockPos, Block> {
-        val blocks = HashMap<BlockPos, Block>()
-        for (x in 5 downTo -4) {
-            for (y in 5 downTo -4) {
-                for (z in 5 downTo -4) {
-                    val blockPos = BlockPos(player.blockX + x, player.blockY + y, player.blockZ + z)
-                    val block = getBlock(blockPos)
-                    blocks.put(blockPos, block)
+        for (yOffset in maxYDelta downTo minYDelta) {
+            val y = centerY + yOffset
+            for (xOffset in radius downTo -radius) {
+                val x = centerX + xOffset
+                for (zOffset in radius downTo -radius) {
+                    val z = centerZ + zOffset
+                    val state = world.getBlockState(BlockPos(x, y, z))
+                    if (!isPosSolid(state)) continue
+                    val dx = x - centerX
+                    val dy = y - centerY
+                    val dz = z - centerZ
+                    val distance = (dx * dx + dy * dy + dz * dz).toDouble()
+                    if (distance < bestDistance) {
+                        bestDistance = distance
+                        best = BlockPos(x, y, z)
+                    }
                 }
             }
         }
-        return blocks
+        return best
     }
 
+    private fun isAirBlock(blockPos: BlockPos): Boolean =
+        ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(blockPos))
+
     private fun getPos(pos: BlockPos): BlockData? {
-        if (isPosSolid(pos.add(-1, 0, 0))) {
-            return BlockData(pos.add(-1, 0, 0), Direction.EAST)
-        } else if (isPosSolid(pos.add(1, 0, 0))) {
-            return BlockData(pos.add(1, 0, 0), Direction.WEST)
-        } else if (isPosSolid(pos.add(0, 0, 1))) {
-            return BlockData(pos.add(0, 0, 1), Direction.NORTH)
-        } else if (isPosSolid(pos.add(0, 0, -1))) {
-            return BlockData(pos.add(0, 0, -1), Direction.SOUTH)
-        } else if (isPosSolid(pos.add(0, -1, 0))) {
-            return BlockData(pos.add(0, -1, 0), Direction.UP)
-        }
+        val west = pos.add(-1, 0, 0)
+        if (isPosSolid(west)) return BlockData(west, Direction.EAST)
+        val east = pos.add(1, 0, 0)
+        if (isPosSolid(east)) return BlockData(east, Direction.WEST)
+        val south = pos.add(0, 0, 1)
+        if (isPosSolid(south)) return BlockData(south, Direction.NORTH)
+        val north = pos.add(0, 0, -1)
+        if (isPosSolid(north)) return BlockData(north, Direction.SOUTH)
+        val down = pos.add(0, -1, 0)
+        if (isPosSolid(down)) return BlockData(down, Direction.UP)
         return null
     }
 
-    private fun isPosSolid(pos: BlockPos?): Boolean {
-        val block = world.getBlockState(pos).block
-        if (block is TrapdoorBlock || block is DoorBlock || block is FenceGateBlock) {
-            return false
-        }
-        return !listOf(
-            Blocks.ANVIL,
-            Blocks.AIR,
-            Blocks.WATER,
-            Blocks.FIRE,
-            Blocks.LAVA,
-            Blocks.SKELETON_SKULL,
-            Blocks.OAK_SIGN,
-            Blocks.TRAPPED_CHEST,
-            Blocks.CHEST,
-            Blocks.ENCHANTING_TABLE,
-            Blocks.ENDER_CHEST,
-            Blocks.CRAFTING_TABLE,
-            Blocks.DAYLIGHT_DETECTOR,
-            Blocks.COBWEB,
-            Blocks.SHORT_GRASS,
-            Blocks.FLOWER_POT,
-            Blocks.CHORUS_FLOWER,
-            Blocks.SUNFLOWER,
-            Blocks.CORNFLOWER,
-            Blocks.TORCHFLOWER,
-            Blocks.OAK_BUTTON,
-            Blocks.ACACIA_BUTTON,
-            Blocks.BIRCH_BUTTON,
-            Blocks.CRIMSON_BUTTON,
-            Blocks.CHERRY_BUTTON,
-            Blocks.DARK_OAK_BUTTON,
-            Blocks.JUNGLE_BUTTON,
-            Blocks.STONE_BUTTON,
-            Blocks.WARPED_BUTTON,
-            Blocks.SPRUCE_BUTTON,
-            Blocks.NOTE_BLOCK,
-            Blocks.PLAYER_HEAD
-        ).contains(block) && !ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(pos))
+    private fun isPosSolid(pos: BlockPos?): Boolean =
+        pos != null && isPosSolid(world.getBlockState(pos))
+
+    private fun isPosSolid(state: BlockState): Boolean {
+        val block = state.block
+        if (block is TrapdoorBlock || block is DoorBlock || block is FenceGateBlock) return false
+        return block !in rejectedSupportBlocks && !ClientRayTraceUtil.isIgnoredBlock(state)
     }
 
     private data class SlotData(val slot: Int, val hand: Hand) {

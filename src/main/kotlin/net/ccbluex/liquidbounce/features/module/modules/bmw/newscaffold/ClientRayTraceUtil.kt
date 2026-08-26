@@ -105,6 +105,9 @@ object ClientRayTraceUtil : MinecraftShortcuts {
 
         val startPos = player.eyePos
         var direction = Vec3d.fromPolar(pitch, yaw)
+        val directionLength = direction.length()
+        if (directionLength < EPSILON) return null
+        val maxRayT = reachDistance / directionLength
         val endPos = startPos!!.add(direction.multiply(reachDistance))
         if (direction.x == 0.0) direction = Vec3d(EPSILON, direction.y, direction.z)
         if (direction.y == 0.0) direction = Vec3d(direction.x, EPSILON, direction.z)
@@ -129,7 +132,8 @@ object ClientRayTraceUtil : MinecraftShortcuts {
 
         val world = player.world
         var box: Box
-        while (startPos.distanceTo(currentPos.toCenterPos()) <= reachDistance) {
+        var currentT = 0.0
+        while (currentT <= maxRayT + EPSILON) {
             if (!world.isAir(currentPos)) {
                 val state = world.getBlockState(currentPos)
                 if (!ignorePredicate.test(state)) {
@@ -158,17 +162,21 @@ object ClientRayTraceUtil : MinecraftShortcuts {
             }
             if (tMaxX < tMaxY) {
                 if (tMaxX < tMaxZ) {
+                    currentT = tMaxX
                     currentPos = currentPos.add(stepX, 0, 0)
                     tMaxX += tDeltaX
                 } else {
+                    currentT = tMaxZ
                     currentPos = currentPos.add(0, 0, stepZ)
                     tMaxZ += tDeltaZ
                 }
             } else {
                 if (tMaxY < tMaxZ) {
+                    currentT = tMaxY
                     currentPos = currentPos.add(0, stepY, 0)
                     tMaxY += tDeltaY
                 } else {
+                    currentT = tMaxZ
                     currentPos = currentPos.add(0, 0, stepZ)
                     tMaxZ += tDeltaZ
                 }

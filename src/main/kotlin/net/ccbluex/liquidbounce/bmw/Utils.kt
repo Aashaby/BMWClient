@@ -117,7 +117,8 @@ data class PlayerSimulationResult(
     val position: Vec3d,
     val velocity: Vec3d,
     val tick: Int,
-    val stop: Boolean
+    val stop: Boolean,
+    val firstTickPosition: Vec3d? = null
 )
 
 fun simulatePlayerMovement(
@@ -134,8 +135,9 @@ fun simulatePlayerMovement(
     val movementForward = player.input.movementForward.toDouble()
     val movementSideways = player.input.movementSideways.toDouble()
 
+    var firstTickPosition: Vec3d? = null
+
     repeat(ticks) { tick ->
-        // Movement
         val inputVelocity = Entity.movementInputToVelocity(
             Vec3d(movementSideways * DRAG, 0.0, movementForward * DRAG),
             0.02f,
@@ -143,7 +145,6 @@ fun simulatePlayerMovement(
         )
         velocity = velocity.add(inputVelocity)
 
-        // Collisions
         velocity = Entity.adjustMovementForCollisions(
             player,
             velocity,
@@ -153,15 +154,16 @@ fun simulatePlayerMovement(
         )
 
         position = position.add(velocity)
+        if (tick == 0) firstTickPosition = position
 
         velocity = velocity.multiply(DRAG, DRAG, DRAG).subtract(0.0, GRAVITY, 0.0)
 
         if (stopWhen(position, velocity, tick + 1)) {
-            return PlayerSimulationResult(position, velocity, tick + 1, true)
+            return PlayerSimulationResult(position, velocity, tick + 1, true, firstTickPosition)
         }
     }
 
-    return PlayerSimulationResult(position, velocity, ticks, false)
+    return PlayerSimulationResult(position, velocity, ticks, false, firstTickPosition)
 }
 
 fun isOnGround(position: Vec3d) = world.getBlockCollisions(
