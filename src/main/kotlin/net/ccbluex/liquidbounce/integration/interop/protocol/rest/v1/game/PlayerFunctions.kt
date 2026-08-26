@@ -155,7 +155,7 @@ data class TargetData(
             name = if (entity is PlayerEntity) {
                 ModuleNameProtect.replace(entity.nameForScoreboard)
             } else {
-                entity.displayName.string.ifBlank { entity.type.toString().substringAfterLast('.') }
+                entity.displayName?.string?.ifBlank { entity.type.toString().substringAfterLast('.') } ?: entity.type.toString().substringAfterLast('.')
             },
             uuid = entity.uuidAsString,
             type = net.minecraft.registry.Registries.ENTITY_TYPE.getId(entity.type).toString(),
