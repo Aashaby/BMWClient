@@ -39,7 +39,7 @@
   position: absolute;
   height: 100%;
 //   background: linear-gradient(90deg, rgba($accent-color, 0.3), rgba($accent-color-2, 0.3));
-  background-color: rgba(255, 59, 59, 0.42);
+  background-color: rgba(255, 59, 59, 0.726);
   transition: width 0.1s ease-out;
   clip-path: inset(0 0 0 0 round 10px);
 }
@@ -48,7 +48,7 @@
   position: absolute;
   height: 100%;
 //   background: linear-gradient(90deg, rgba($accent-color, 0.8), rgba($accent-color-2, 0.8));
-  background-color: rgba(var(--accent-color), 0.82);
+  background-color: rgba(255, 59, 59, 0.692);
   transition: width 0.2s ease-in-out;
   clip-path: inset(0 0 0 0 round 10px);
 }

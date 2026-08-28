@@ -197,19 +197,6 @@ export interface Scoreboard {
     }[];
 }
 
-
-
-export interface TargetData {
-    name: string;
-    uuid: string;
-    type: string;
-    position: Vec3;
-    health: number;
-    maxHealth: number;
-    absorption: number;
-    armor: number;
-    armorItems: ItemStack[];
-}
 export interface PlayerData {
     username: string;
     uuid: string;

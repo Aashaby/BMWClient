@@ -307,7 +307,9 @@ class BlockPlacer(
     }
 
     fun doPlacement(isSupport: Boolean, pos: BlockPos, placementTarget: BlockPlacementTarget) {
-        blocks.remove(pos.asLong())
+        // Keep the target queued until the interaction actually succeeds. Removing it
+        // before slot/raycast/interaction validation made transient failures silently
+        // drop Scaffold placements and was a major source of edge/Telly misses.
 
         // choose block to place
         val slot = if (isSupport) {
@@ -324,24 +326,32 @@ class BlockPlacer(
         }
 
         // get the block hit result needed for the placement
-        val blockHitResult = raytraceTarget(
-            placementTarget.interactedBlockPos,
-            verificationRotation,
-            placementTarget.direction
-        ) ?: return
+        val blockHitResult = raytraceTarget(placementTarget, verificationRotation) ?: return
 
-        SilentHotbar.selectSlotSilently(this, slot, slotResetDelay.random())
-
-        if (slot.itemStack.item !is BlockItem || pos.getState()!!.isReplaceable) {
-            // place the block
-            doPlacement(blockHitResult, hand = slot.useHand, swingMode = swingMode)
-            placedRenderer.addBlock(pos)
+        // A cancelled silent-slot request must not consume the placement target.
+        if (!SilentHotbar.selectSlotSilently(this, slot, slotResetDelay.random())) {
+            return
         }
 
-        targetRenderer.removeBlock(pos)
+        if (slot.itemStack.item !is BlockItem || pos.getState()!!.isReplaceable) {
+            val onSuccess = {
+                removeFromQueue(pos)
+                placedRenderer.addBlock(pos)
+                true
+            }
+
+            doPlacement(
+                blockHitResult,
+                hand = slot.useHand,
+                onPlacementSuccess = onSuccess,
+                onItemUseSuccess = onSuccess,
+                swingMode = swingMode
+            )
+        }
     }
 
-    private fun raytraceTarget(pos: BlockPos, providedRotation: Rotation, direction: Direction): BlockHitResult? {
+    private fun raytraceTarget(placementTarget: BlockPlacementTarget, providedRotation: Rotation): BlockHitResult? {
+        val pos = placementTarget.interactedBlockPos
         val blockHitResult = raytraceBlock(
             range = max(range, wallRange).toDouble(),
             rotation = providedRotation,
@@ -349,12 +359,13 @@ class BlockPlacer(
             state = pos.getState()!!
         )
 
-        if (blockHitResult != null && blockHitResult.type == HitResult.Type.BLOCK && blockHitResult.blockPos == pos) {
-            return blockHitResult.withSide(direction)
+        if (blockHitResult != null && placementTarget.doesCrosshairTargetFullFillRequirements(blockHitResult)) {
+            return blockHitResult
         }
 
         if (constructFailResult) {
-            return BlockHitResult(pos.toCenterPos(), direction, pos, false)
+            // Use the exact target-finding interaction point instead of the block center.
+            return placementTarget.blockHitResult
         }
 
         return null

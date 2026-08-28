@@ -18,7 +18,6 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.world.scaffold.features
 
-import net.ccbluex.liquidbounce.LiquidBounce.logger
 import net.ccbluex.liquidbounce.config.types.nesting.ToggleableConfigurable
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.utils.entity.isCloseToEdge
@@ -35,8 +34,22 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
 
     private const val MAX_PLACEMENT_OFFSETS = 4
 
+    /** Distance to stay behind the detected edge while prediction history warms up. */
+    private val bootstrapBackoff by float("BootstrapBackoff", 0.2f, 0.0f..0.4f)
+
+    /** Disable future-position prediction this close to the edge. */
+    private val predictionCutoffDistance by float("PredictionCutoffDistance", 0.05f, 0.0f..0.3f)
+
+    /** Number of successful placements used to warm up history-based prediction. */
+    private val warmupPlacements by int("WarmupPlacements", 2, 0..MAX_PLACEMENT_OFFSETS)
+
     fun reset() {
         lastPlacementOffsets.clear()
+    }
+
+    override fun onDisabled() {
+        reset()
+        super.onDisabled()
     }
 
     fun onPlace(optimalLine: Line?, lastFallOffPosition: Vec3d?) {
@@ -46,15 +59,14 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
 
         val fallOffPoint = lastFallOffPosition ?: return
 
-        val lineDirAngle = atan2(optimalLine.direction.z, optimalLine.direction.x).toFloat()
+        val direction = optimalLine.direction
+        if (direction.lengthSquared() < 1.0E-8) {
+            return
+        }
+
+        val lineDirAngle = atan2(direction.z, direction.x).toFloat()
 
         val unrotatedOffset = (player.pos - fallOffPoint).rotateY(lineDirAngle)
-
-        val x = getAvgPlacementPos()
-
-        if (x != null) {
-            logger.debug(x.distanceTo(unrotatedOffset))
-        }
 
         lastPlacementOffsets.addLast(unrotatedOffset)
 
@@ -81,10 +93,9 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
             return null
         }
 
-        val optimalEdgeDist = 0.0
-
-        // When we are close to the edge, we are able to place right now. Thus, we don't want to use a future position
-        if (player.isCloseToEdge(DirectionalInput(player.input), distance = optimalEdgeDist)) {
+        // When we are close to the edge, we can place immediately. Do not
+        // predict a future position in that case.
+        if (player.isCloseToEdge(DirectionalInput(player.input), distance = predictionCutoffDistance.toDouble())) {
             return null
         }
 
@@ -93,22 +104,31 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
 
         val fallOffPointToPlayer = fallOffPoint - player.pos
 
-        val offset = when (val last = getAvgPlacementPos()) {
-            null -> {
-                // Move the point where we want to place a bit more to the player since we ideally want to place at an
-                // edge distance of 0.2 or so
-                fallOffPoint - fallOffPointToPlayer.normalize() * optimalEdgeDist
-            }
-            else -> {
-                val lineDirAngle = atan2(optimalLine.direction.z, optimalLine.direction.x).toFloat()
-
-                val predictedPos = fallOffPoint + last.rotateY(-lineDirAngle)
-
-                predictedPos
-            }
+        val bootstrapPos = if (bootstrapBackoff <= 0.0f) {
+            fallOffPoint
+        } else {
+            fallOffPoint - fallOffPointToPlayer.normalize() * bootstrapBackoff.toDouble()
         }
 
-        return offset
+        val last = getAvgPlacementPos() ?: return bootstrapPos
+
+        val direction = optimalLine.direction
+        if (direction.lengthSquared() < 1.0E-8) {
+            return bootstrapPos
+        }
+
+        val lineDirAngle = atan2(direction.z, direction.x).toFloat()
+        val predictedPos = fallOffPoint + last.rotateY(-lineDirAngle)
+
+        // Avoid a large jump from the bootstrap estimate to the first history
+        // sample. Blend in history over the first few placements.
+        val blend = if (warmupPlacements <= 0) {
+            1.0
+        } else {
+            (lastPlacementOffsets.size.toDouble() / warmupPlacements.toDouble()).coerceIn(0.0, 1.0)
+        }
+
+        return bootstrapPos.lerp(predictedPos, blend)
     }
 
     fun getFallOffPositionOnLine(optimalLine: Line): Vec3d? {

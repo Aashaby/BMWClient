@@ -6,9 +6,7 @@ function isValidHex(hex: string | null): boolean {
 
 function getAccentColor(): string {
   try {
-    const legacy = localStorage.getItem('lb_accentColor');
-    const current = localStorage.getItem('clickgui.color');
-    const color = isValidHex(current) ? current : legacy;
+    const color = localStorage.getItem('lb_accentColor');
     return isValidHex(color) ? color! : '#1e90ff';
   } catch {
     return '#1e90ff';
@@ -16,12 +14,6 @@ function getAccentColor(): string {
 }
 
 const accentColorStore = writable('#1e90ff');
-
-accentColorStore.subscribe(color => {
-  if (typeof document !== 'undefined') {
-    document.documentElement.style.setProperty('--accent-color', hexToRgb(color));
-  }
-});
 
 function initAccentColorStore() {
   accentColorStore.set(getAccentColor());
@@ -40,15 +32,7 @@ window.addEventListener('storage', () => {
 export function setAccentColor(color: string) {
   if (!isValidHex(color)) return;
   localStorage.setItem('lb_accentColor', color);
-  localStorage.setItem('clickgui.color', color);
   accentColorStore.set(color);
-  document.documentElement.style.setProperty('--accent-color', hexToRgb(color));
-}
-
-function hexToRgb(hex: string): string {
-  const value = hex.replace('#', '');
-  const expanded = value.length === 3 ? value.split('').map(c => c + c).join('') : value;
-  return `${parseInt(expanded.slice(0, 2), 16)}, ${parseInt(expanded.slice(2, 4), 16)}, ${parseInt(expanded.slice(4, 6), 16)}`;
 }
 
 export { accentColorStore };

@@ -129,7 +129,7 @@ object ModuleAutoFish : ClientModule("AutoFish", Category.PLAYER) {
 
                 // From my testing, we should see distances around 0.04 - 0.08 (Paper version 1.21.1-132)
                 // so a threshold of 1.0 should be more than enough.
-                if (hookToSound > PullTriggerSoundDistance.distance) {
+                if (hookToSound > PullTriggerSoundDistance.distance.toDouble().let { it * it }) {
                     return@handler
                 }
             }

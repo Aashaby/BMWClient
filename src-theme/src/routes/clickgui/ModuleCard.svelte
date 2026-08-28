@@ -31,7 +31,6 @@
   let bindSetting: any = null;
   let loadingBind = false;
   let bindPanelContainer: HTMLElement;
-  let bindWriteQueue = Promise.resolve();
 
   let enabled = module.enabled;
 
@@ -54,20 +53,16 @@
     }
   }
 
-  function handleBindChange() {
+  async function handleBindChange() {
     if (!bindSetting) return;
-    const requested = bindSetting;
-    bindWriteQueue = bindWriteQueue
-      .catch(() => undefined)
-      .then(async () => {
-        const allSettings = await getModuleSettings(module.name);
-        const newSettings = allSettings.value.map((s: any) =>
-          s.name === "Bind" ? requested : s
-        );
-        await setModuleSettings(module.name, { ...allSettings, value: newSettings });
-        bindSetting = requested;
-        module = { ...module, bind: requested?.value?.boundKey };
-      });
+    const allSettings = await getModuleSettings(module.name);
+    const newSettings = allSettings.value.map((s: any) =>
+      s.name === "Bind" ? bindSetting : s
+    );
+    await setModuleSettings(module.name, { ...allSettings, value: newSettings });
+    const settings = await getModuleSettings(module.name);
+    bindSetting = settings.value.find((s: any) => s.name === "Bind");
+    module = { ...module, bind: bindSetting?.value?.boundKey };
   }
 
   function handleClickOutsideBindPanel(event: MouseEvent) {

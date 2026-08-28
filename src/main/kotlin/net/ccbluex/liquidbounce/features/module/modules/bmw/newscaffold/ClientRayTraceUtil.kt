@@ -115,33 +115,21 @@ object ClientRayTraceUtil : MinecraftShortcuts {
         val stepY = sign(direction.y).toInt()
         val stepZ = sign(direction.z).toInt()
 
-        val tMaxX = if (stepX == 0) Double.POSITIVE_INFINITY
-        else {
-            val boundary = if (stepX > 0) currentPos.x + 1.0 else currentPos.x.toDouble()
-            (boundary - startPos.x) / direction.x
-        }
-        val tMaxY = if (stepY == 0) Double.POSITIVE_INFINITY
-        else {
-            val boundary = if (stepY > 0) currentPos.y + 1.0 else currentPos.y.toDouble()
-            (boundary - startPos.y) / direction.y
-        }
-        val tMaxZ = if (stepZ == 0) Double.POSITIVE_INFINITY
-        else {
-            val boundary = if (stepZ > 0) currentPos.z + 1.0 else currentPos.z.toDouble()
-            (boundary - startPos.z) / direction.z
-        }
+        val nextBoundaryX = (if (stepX > 0) currentPos.x + 1 else currentPos.x).toDouble()
+        val nextBoundaryY = (if (stepY > 0) currentPos.y + 1 else currentPos.y).toDouble()
+        val nextBoundaryZ = (if (stepZ > 0) currentPos.z + 1 else currentPos.z).toDouble()
 
-        var nextX = tMaxX
-        var nextY = tMaxY
-        var nextZ = tMaxZ
-        val tDeltaX = if (stepX == 0) Double.POSITIVE_INFINITY else abs(1.0 / direction.x)
-        val tDeltaY = if (stepY == 0) Double.POSITIVE_INFINITY else abs(1.0 / direction.y)
-        val tDeltaZ = if (stepZ == 0) Double.POSITIVE_INFINITY else abs(1.0 / direction.z)
+        var tMaxX = (nextBoundaryX - startPos.x) / direction.x
+        var tMaxY = (nextBoundaryY - startPos.y) / direction.y
+        var tMaxZ = (nextBoundaryZ - startPos.z) / direction.z
+
+        val tDeltaX = stepX / direction.x
+        val tDeltaY = stepY / direction.y
+        val tDeltaZ = stepZ / direction.z
 
         val world = player.world
         var box: Box
-        // The direction is normalized, therefore t is world-space distance.
-        while (minOf(nextX, nextY, nextZ) <= reachDistance) {
+        while (startPos.distanceTo(currentPos.toCenterPos()) <= reachDistance) {
             if (!world.isAir(currentPos)) {
                 val state = world.getBlockState(currentPos)
                 if (!ignorePredicate.test(state)) {
@@ -168,15 +156,22 @@ object ClientRayTraceUtil : MinecraftShortcuts {
                     }
                 }
             }
-            if (nextX <= nextY && nextX <= nextZ) {
-                currentPos = currentPos.add(stepX, 0, 0)
-                nextX += tDeltaX
-            } else if (nextY <= nextZ) {
-                currentPos = currentPos.add(0, stepY, 0)
-                nextY += tDeltaY
+            if (tMaxX < tMaxY) {
+                if (tMaxX < tMaxZ) {
+                    currentPos = currentPos.add(stepX, 0, 0)
+                    tMaxX += tDeltaX
+                } else {
+                    currentPos = currentPos.add(0, 0, stepZ)
+                    tMaxZ += tDeltaZ
+                }
             } else {
-                currentPos = currentPos.add(0, 0, stepZ)
-                nextZ += tDeltaZ
+                if (tMaxY < tMaxZ) {
+                    currentPos = currentPos.add(0, stepY, 0)
+                    tMaxY += tDeltaY
+                } else {
+                    currentPos = currentPos.add(0, 0, stepZ)
+                    tMaxZ += tDeltaZ
+                }
             }
         }
         return null

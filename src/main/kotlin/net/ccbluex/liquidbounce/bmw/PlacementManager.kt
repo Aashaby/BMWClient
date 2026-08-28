@@ -39,7 +39,6 @@ import net.ccbluex.liquidbounce.utils.kotlin.Priority
 import net.ccbluex.liquidbounce.utils.kotlin.random
 import net.ccbluex.liquidbounce.utils.math.minus
 import net.minecraft.util.Hand
-import net.minecraft.util.hit.BlockHitResult
 import net.minecraft.util.hit.HitResult
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
@@ -139,16 +138,25 @@ object PlacementManager : EventListener, MinecraftShortcuts {
             (GrimNoSlowFood.modes.activeChoice as GrimNoSlowFoodNoC0F).release()
         }
 
+        val activeRequester = requester ?: run {
+            reset()
+            return@tickHandler
+        }
+        val activeRequest = request ?: run {
+            reset()
+            return@tickHandler
+        }
+
         val position = simulatePlayerMovement(2).position
         var rotation: Rotation
-        if (request!!.pos == null) {
+        if (activeRequest.pos == null) {
             rotation = Rotation(
                 RotationManager.currentRotation?.yaw ?: player.yaw,
                 90f - (0.002f..0.004f).random()
             )
         } else {
             rotation = Rotation.lookingAt(
-                request!!.pos!!,
+                activeRequest.pos,
                 player.eyePos.add(position.minus(player.pos)),
             )
             rotation = Rotation(
@@ -164,7 +172,7 @@ object PlacementManager : EventListener, MinecraftShortcuts {
                 val waterBucketSlot = getWaterBucketSlot()
                 if (waterBucketSlot == -1) {
                     if (request.debug.noBucket != null) {
-                        notifyAsMessage(requester!!, request.debug.noBucket)
+                        notifyAsMessage(activeRequester, request.debug.noBucket)
                     }
                     reset()
                     return@tickHandler
@@ -185,7 +193,7 @@ object PlacementManager : EventListener, MinecraftShortcuts {
                         movementCorrection = MovementCorrection.SILENT
                     ),
                     priority = request.priority,
-                    provider = requester!!
+                    provider = activeRequester
                 )
 
                 waitTicks(2)
@@ -201,7 +209,7 @@ object PlacementManager : EventListener, MinecraftShortcuts {
                     )
                 } else {
                     if (request.debug.failToPlace != null) {
-                        notifyAsMessage(requester!!, request.debug.failToPlace)
+                        notifyAsMessage(activeRequester, request.debug.failToPlace)
                     }
                     reset()
                     return@tickHandler
@@ -211,8 +219,7 @@ object PlacementManager : EventListener, MinecraftShortcuts {
 
                 val hitResult2 = raycast(RotationManager.serverRotation, player.blockInteractionRange)
                 if (hitResult2.type == HitResult.Type.BLOCK && hitResult2.side == Direction.UP) {
-                    val blockHitResult = mc.crosshairTarget as BlockHitResult
-                    interaction.interactBlock(player, hand, blockHitResult)
+                    interaction.interactBlock(player, hand, hitResult2)
                     interaction.interactItem(
                         player,
                         hand,
@@ -221,7 +228,7 @@ object PlacementManager : EventListener, MinecraftShortcuts {
                     )
                 } else {
                     if (request.debug.failToRecycle != null) {
-                        notifyAsMessage(requester!!, request.debug.failToRecycle)
+                        notifyAsMessage(activeRequester, request.debug.failToRecycle)
                     }
                     reset()
                     return@tickHandler
@@ -247,18 +254,17 @@ object PlacementManager : EventListener, MinecraftShortcuts {
                         movementCorrection = MovementCorrection.SILENT
                     ),
                     priority = request.priority,
-                    provider = requester!!
+                    provider = activeRequester
                 )
 
                 waitTicks(2)
 
                 val hitResult = raycast(RotationManager.serverRotation, player.blockInteractionRange)
                 if (hitResult.type == HitResult.Type.BLOCK && hitResult.side == Direction.UP) {
-                    val blockHitResult = mc.crosshairTarget as BlockHitResult
-                    interaction.interactBlock(player, hand, blockHitResult)
+                    interaction.interactBlock(player, hand, hitResult2)
                 } else {
                     if (request.debug != null) {
-                        notifyAsMessage(requester!!, request.debug)
+                        notifyAsMessage(activeRequester, request.debug)
                     }
                     reset()
                     return@tickHandler

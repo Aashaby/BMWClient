@@ -25,6 +25,7 @@ import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleSca
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold.rawInput
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.features.LedgeAction
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.features.ScaffoldLedgeExtension
+import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.utils.raycast
 import net.ccbluex.liquidbounce.utils.block.getState
@@ -148,7 +149,7 @@ object ScaffoldGodBridgeTechnique : ScaffoldTechnique("GodBridge"), ScaffoldLedg
             return getRotationForNoInput(target)
         }
 
-        val direction = getMovementDirectionOfInput(player.yaw, rawInput) + 180
+        val direction = getMovementDirectionOfInput(RotationManager.currentRotation?.yaw ?: player.yaw, rawInput) + 180
 
         // Round to 45°-steps (NORTH, NORTH_EAST, etc.)
         val movingYaw = round(direction / 45) * 45

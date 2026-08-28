@@ -22,6 +22,7 @@ import net.ccbluex.liquidbounce.event.events.MovementInputEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold.getTargetedPosition
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold.rawInput
+import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.block.getState
 import net.ccbluex.liquidbounce.utils.block.targetfinding.*
@@ -86,7 +87,7 @@ object ScaffoldBreezilyTechnique : ScaffoldTechnique("Breezily") {
 
         val ma = 1 - currentEdgeDistanceRandom
         var currentSideways = 0f
-        when (Direction.fromHorizontalDegrees(player.yaw.toDouble())) {
+        when (Direction.fromHorizontalDegrees((RotationManager.currentRotation?.yaw ?: player.yaw).toDouble())) {
             Direction.SOUTH -> {
                 if (modX > ma) currentSideways = 1f
                 if (modX < currentEdgeDistanceRandom) currentSideways = -1f
@@ -131,7 +132,7 @@ object ScaffoldBreezilyTechnique : ScaffoldTechnique("Breezily") {
             return getRotationForNoInput(target)
         }
 
-        val direction = getMovementDirectionOfInput(player.yaw, rawInput) + 180
+        val direction = getMovementDirectionOfInput(RotationManager.currentRotation?.yaw ?: player.yaw, rawInput) + 180
 
         // Round to 45°-steps (NORTH, NORTH_EAST, etc.)
         val movingYaw = round(direction / 45) * 45

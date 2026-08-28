@@ -155,10 +155,13 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
                 (packet as EntityPositionSyncS2CPacket).values.position()
             }
 
-            position?.setPos(pos)
+            val trackedTarget = target ?: return@handler
+            val packetPosition = pos ?: return@handler
+            val trackedPosition = position ?: return@handler
+            trackedPosition.setPos(packetPosition)
 
             // Is the target's actual position closer than its tracked position?
-            if (target!!.squareBoxedDistanceTo(player, pos!!) < target!!.squaredBoxedDistanceTo(player)) {
+            if (trackedTarget.squareBoxedDistanceTo(player, packetPosition) < trackedTarget.squaredBoxedDistanceTo(player)) {
                 // Process all packets. We want to be able to hit the enemy, not the opposite.
                 processPackets(true)
                 // And stop right here. No need to cancel further packets.
@@ -288,12 +291,20 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
         shouldPause = enemy is LivingEntity && enemy.hurtTime >= PauseOnHurtTime.hurtTime
 
         if (!shouldBacktrack(enemy)) {
+            // Attack mode has no periodic target selector. If this attack is
+            // not eligible for backtracking, discard the previous target so
+            // stale incoming packets are not kept behind.
+            if (targetMode == Mode.ATTACK) {
+                clear()
+            }
             return
         }
 
         // Reset on enemy change
         if (enemy != target) {
             clear(resetChronometer = false)
+            trackingBufferChronometer.reset()
+            currentDelay = delay.random()
 
             // Instantly set new position, so it does not look like the box was created with delay
             position = TrackedPosition().apply { this.pos = enemy.trackedPosition.pos }

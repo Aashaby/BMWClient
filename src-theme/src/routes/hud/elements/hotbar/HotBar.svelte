@@ -63,7 +63,7 @@
     });
 </script>
 
-{#if playerData && playerData.gameMode !== "spectator" && playerData.gameMode !== "creative"}
+{#if playerData && playerData.gameMode !== "spectator"}
     <div class="hotbar">
         {#if overlayMessage !== null}
             <div class="overlay-message" out:fade={{duration: 200}}

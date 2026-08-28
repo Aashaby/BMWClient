@@ -66,12 +66,30 @@ object WorldToScreen : EventListener {
             .mulProject(cacheMatrix.set(projectionMatrix).mul(mvMatrix))
 
         val scaleFactor = mc.window.scaleFactor
+        val viewportWidth = mc.framebuffer.viewportWidth
+        val viewportHeight = mc.framebuffer.viewportHeight
+        if (!scaleFactor.isFinite() || scaleFactor <= 0.0 || viewportWidth <= 0 || viewportHeight <= 0) {
+            return null
+        }
         val guiScaleMul = 0.5f / scaleFactor.toFloat()
 
         val screenPos = transformedPos.mul(1.0F, -1.0F, 1.0F).add(1.0F, 1.0F, 0.0F)
-            .mul(guiScaleMul * mc.framebuffer.viewportWidth, guiScaleMul * mc.framebuffer.viewportHeight, 1.0F)
+            .mul(guiScaleMul * viewportWidth, guiScaleMul * viewportHeight, 1.0F)
 
-        return if (transformedPos.z < 1.0F) Vec3(screenPos.x, screenPos.y, transformedPos.z) else null
+        // JOML's mulProject can produce NaN/Infinity when the homogeneous W
+        // component is zero/near-zero (for example while matrices are being
+        // rebuilt during a resize or perspective change). Never expose those
+        // values to HUD/ESP code.
+        return if (
+            screenPos.x.isFinite() &&
+            screenPos.y.isFinite() &&
+            screenPos.z.isFinite() &&
+            screenPos.z < 1.0F
+        ) {
+            Vec3(screenPos.x, screenPos.y, screenPos.z)
+        } else {
+            null
+        }
     }
 
     @JvmStatic
@@ -80,16 +98,24 @@ object WorldToScreen : EventListener {
         val screenVec = cacheVec3f.set(posOnScreen.x, posOnScreen.y, 1.0F)
 
         val scaleFactor = mc.window.scaleFactor
+        val viewportWidth = mc.framebuffer.viewportWidth
+        val viewportHeight = mc.framebuffer.viewportHeight
+        if (!scaleFactor.isFinite() || scaleFactor <= 0.0 || viewportWidth <= 0 || viewportHeight <= 0) {
+            return Line(cameraPos, cameraPos)
+        }
         val guiScaleMul = 0.5f / scaleFactor.toFloat()
 
         val transformedPos = screenVec.mul(
-            1.0F / (guiScaleMul * mc.framebuffer.viewportWidth),
-            1.0F / (guiScaleMul * mc.framebuffer.viewportHeight),
+            1.0F / (guiScaleMul * viewportWidth),
+            1.0F / (guiScaleMul * viewportHeight),
             1.0F
         ).sub(1.0F, 1.0F, 0.0F).mul(1.0F, -1.0F, 1.0F)
 
-        val relativePos = cacheVec3f.set(transformedPos)
-            .mulProject(cacheMatrix.set(projectionMatrix).mul(mvMatrix).invert())
+        val inverse = cacheMatrix.set(projectionMatrix).mul(mvMatrix).invert()
+        val relativePos = cacheVec3f.set(transformedPos).mulProject(inverse)
+        if (!relativePos.x.isFinite() || !relativePos.y.isFinite() || !relativePos.z.isFinite()) {
+            return Line(cameraPos, cameraPos)
+        }
 
         ModuleProjectileAimbot.debugParameter("s2w") {
             relativePos.toString(NumberFormat.getInstance())

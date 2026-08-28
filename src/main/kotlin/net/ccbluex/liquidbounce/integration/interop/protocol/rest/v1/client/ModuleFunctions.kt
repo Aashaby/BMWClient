@@ -36,24 +36,7 @@ import net.ccbluex.netty.http.model.RequestObject
 import net.ccbluex.netty.http.util.httpForbidden
 import net.ccbluex.netty.http.util.httpNoContent
 import net.ccbluex.netty.http.util.httpOk
-import java.util.concurrent.CompletableFuture
 
-
-
-private fun runOnClientThreadAndWait(block: () -> Unit) {
-    if (mc.isOnThread) {
-        block()
-        return
-    }
-
-    val future = CompletableFuture<Unit>()
-    mc.execute {
-        runCatching { block() }
-            .onSuccess { future.complete(Unit) }
-            .onFailure { future.completeExceptionally(it) }
-    }
-    future.join()
-}
 private fun ClientModule.toJsonObject() = JsonObject().apply {
     addProperty("name", name)
     addProperty("category", category.choiceName)
@@ -134,16 +117,16 @@ data class ModuleRequest(val name: String) {
             return httpForbidden("$name already ${if (supposedNew) "enabled" else "disabled"}")
         }
 
-        return try {
-            runOnClientThreadAndWait {
+        mc.execute {
+            runCatching {
                 module.enabled = supposedNew
+
                 ConfigSystem.store(modulesConfigurable)
+            }.onFailure {
+                logger.error("Failed to toggle module $name", it)
             }
-            httpNoContent()
-        } catch (t: Throwable) {
-            logger.error("Failed to toggle module $name", t)
-            httpForbidden("Failed to toggle $name")
         }
+        return httpNoContent()
     }
 
     fun acceptGetSettingsRequest(): FullHttpResponse {
@@ -153,16 +136,11 @@ data class ModuleRequest(val name: String) {
 
     fun acceptPutSettingsRequest(content: String): FullHttpResponse {
         val module = ModuleManager[name] ?: return httpForbidden("$name not found")
-        return try {
-            runOnClientThreadAndWait {
-                ConfigSystem.deserializeConfigurable(module, content.reader())
-                ConfigSystem.store(modulesConfigurable)
-            }
-            httpNoContent()
-        } catch (t: Throwable) {
-            logger.error("Failed to update settings for $name", t)
-            httpForbidden("Failed to update settings for $name")
+        mc.execute {
+            ConfigSystem.deserializeConfigurable(module, content.reader())
+            ConfigSystem.store(modulesConfigurable)
         }
+        return httpNoContent()
     }
 
 }

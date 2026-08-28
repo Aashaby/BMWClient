@@ -37,7 +37,11 @@ class ScalableCanvas : Closeable {
     private val shaderProgram by lazy { mc.shaderLoader.getOrCreateProgram(ShaderProgramKeys.POSITION_TEX_COLOR) }
 
     fun resize(width: Int, height: Int) {
-        if (width() != width && height() != height && width > 0 && height > 0) {
+        // Either dimension changing requires a resize. Using && leaves the
+        // framebuffer at the old size whenever only one dimension changes
+        // (common during window/GUI resizing), causing stretched or clipped
+        // shader output. Never allocate a zero-sized framebuffer.
+        if ((width() != width || height() != height) && width > 0 && height > 0) {
             input.resize(width, height)
         }
     }

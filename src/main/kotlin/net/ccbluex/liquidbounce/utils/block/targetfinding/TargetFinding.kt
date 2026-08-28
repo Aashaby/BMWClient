@@ -176,8 +176,12 @@ data class BlockTargetPlan(
      * cosine of the angle between the expected player's eye position and the normal of the targeted face.
      */
     fun calculateAngleToPlayerEyeCosine(playerPos: Vec3d): Double {
+        // The placement search may be evaluating a predicted pose (e.g. sneaking).
+        // Using the current standing eye height here makes face scoring disagree
+        // with the rotation calculation below and is especially noticeable near
+        // edges / slabs while Telly or Eagle changes pose.
         val deltaToPlayerPos = playerPos
-            .add(0.0, mc.player!!.standingEyeHeight.toDouble(), 0.0)
+            .add(0.0, player.getEyeHeight(this.pose).toDouble(), 0.0)
             .subtract(targetPositionOnBlock)
 
         return deltaToPlayerPos.dotProduct(Vec3d.of(interactionDirection.vector)) / deltaToPlayerPos.length()
@@ -213,9 +217,10 @@ private fun findBestTargetPlanForTargetPosition(
 
     val currentRotation = RotationManager.serverRotation
 
-    val playerEyePositionOnPlacement = targetFindingOptions.playerLocationOnPlacement.position.add(
+    val placement = targetFindingOptions.playerLocationOnPlacement
+    val playerEyePositionOnPlacement = placement.position.add(
         0.0,
-        player.standingEyeHeight.toDouble(),
+        player.getEyeHeight(placement.pose).toDouble(),
         0.0
     )
 
@@ -314,7 +319,8 @@ fun findBestBlockPlacementTarget(pos: BlockPos, options: BlockPlacementTargetFin
             posToInvestigate,
             targetPlan.interactionDirection,
             pointOnFace.face.from.y + currPos.y,
-            rotation
+            rotation,
+            pointOnFace.point.add(Vec3d.of(currPos))
         )
     }
 
@@ -372,12 +378,14 @@ data class BlockPlacementTarget(
      * at the upper half (=> minY = 0.5) in order to be placed correctly
      */
     val minPlacementY: Double,
-    val rotation: Rotation
+    val rotation: Rotation,
+    /** Exact point on the interacted block face selected by target finding. */
+    val interactionPoint: Vec3d = interactedBlockPos.toCenterPos()
 ) {
 
     val blockHitResult: BlockHitResult
         get() = BlockHitResult(
-            interactedBlockPos.toCenterPos(),
+            interactionPoint,
             direction,
             interactedBlockPos,
             false

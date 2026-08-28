@@ -126,7 +126,7 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
             return
         }
 
-        if (Random.nextInt(100) > chance) {
+        if (Random.nextInt(100) >= chance) {
             return
         }
 
@@ -201,6 +201,11 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
     @Suppress("unused")
     private val worldChangeHandler = handler<WorldChangeEvent> {
         blockingStateEnforced = false
+        blockVisual = false
+        blockingTicks = 0
+        flushTicks = 0
+        currentTickOff = tickOffRange.random()
+        currentTickOn = tickOnRange.random()
     }
 
     @Suppress("unused")
@@ -256,7 +261,7 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
 
             unblockMode == UnblockMode.CHANGE_SLOT -> {
                 val currentSlot = player.inventory.selectedSlot
-                val nextSlot = (currentSlot + 1) % 8
+                val nextSlot = (currentSlot + 1) % 9
                 network.sendPacket(UpdateSelectedSlotC2SPacket(nextSlot))
                 network.sendPacket(UpdateSelectedSlotC2SPacket(currentSlot))
                 blockingStateEnforced = false
@@ -323,8 +328,12 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
     /**
      * Check if the player can block with the given item stack.
      */
-    private fun canBlock(itemStack: ItemStack) =
-        itemStack.item?.getUseAction(itemStack) == UseAction.BLOCK
+    private fun canBlock(itemStack: ItemStack): Boolean {
+        // Respect Minecraft's item cooldown before sending a use-item action.
+        // Otherwise AutoBlock can desync when an item ability is cooling down.
+        return itemStack.item?.getUseAction(itemStack) == UseAction.BLOCK &&
+            !player.itemCooldownManager.isCoolingDown(itemStack)
+    }
 
     /**
      * Check if the player is in danger.

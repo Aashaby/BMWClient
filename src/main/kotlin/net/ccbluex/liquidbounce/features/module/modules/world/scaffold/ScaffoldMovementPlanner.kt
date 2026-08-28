@@ -20,6 +20,7 @@ package net.ccbluex.liquidbounce.features.module.modules.world.scaffold
 
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
+import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.block.getState
 import net.ccbluex.liquidbounce.utils.block.targetfinding.BlockPlacementTarget
 import net.ccbluex.liquidbounce.utils.client.player
@@ -49,7 +50,7 @@ object ScaffoldMovementPlanner {
         val direction =
             chooseDirection(
                 getMovementDirectionOfInput(
-                    player.yaw,
+                    RotationManager.currentRotation?.yaw ?: player.yaw,
                     directionalInput,
                 ),
             )
@@ -81,7 +82,8 @@ object ScaffoldMovementPlanner {
     }
 
     private fun divergesTooMuchFromDirection(lastBlocksLine: Line, direction: Vec3d): Boolean {
-        return acos(lastBlocksLine.direction.dotProduct(direction)).absoluteValue / Math.PI * 180 > 50.0
+        val dot = lastBlocksLine.direction.dotProduct(direction).coerceIn(-1.0, 1.0)
+        return acos(dot).absoluteValue / Math.PI * 180 > 50.0
     }
 
     /**

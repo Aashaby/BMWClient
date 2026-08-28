@@ -32,7 +32,6 @@ import net.ccbluex.liquidbounce.utils.aiming.RotationTarget
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.features.MovementCorrection
 import net.ccbluex.liquidbounce.utils.client.RestrictedSingleUseAction
-import net.ccbluex.liquidbounce.utils.client.SilentHotbar
 import net.ccbluex.liquidbounce.utils.client.toRadians
 import net.ccbluex.liquidbounce.utils.entity.airTicks
 import net.ccbluex.liquidbounce.utils.entity.moving
@@ -50,6 +49,7 @@ import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Box
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
+import java.util.function.ToDoubleFunction
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
@@ -62,28 +62,6 @@ import kotlin.math.sin
 object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
 
     private data class BlockData(val pos: BlockPos, val facing: Direction)
-    
-    // Advanced placement strategy with deep context awareness
-    private enum class PlacementStrategy {
-        INSTANT,      // Immediate current position (fastest, most reliable)
-        PREDICTIVE,   // Multi-tick prediction with confidence scoring
-        ADAPTIVE,     // Dynamic hybrid based on real-time analysis
-        SURVIVAL      // Emergency anti-fall with maximum reach
-    }
-    
-    // Movement state classification for precise strategy selection
-    private enum class MovementState {
-        STATIONARY,   // No significant movement
-        LINEAR_SLOW,  // Single axis, low speed
-        LINEAR_FAST,  // Single axis, high speed  
-        DIAGONAL_SLOW,// Dual axis, low speed
-        DIAGONAL_FAST,// Dual axis, high speed
-        ACCELERATING, // Speed increasing
-        DECELERATING, // Speed decreasing
-        TURNING,      // Direction changing
-        FALLING,      // Vertical drop
-        JUMPING       // Vertical ascent
-    }
 
     private enum class Mode(override val choiceName: String) : NamedChoice {
         TELLY("Telly"),
@@ -122,7 +100,6 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
     private val debug by boolean("Debug", false)
     private val duplicateRotPlace by boolean("DuplicateRotPlace", true)
     private val interactItem by boolean("InteractItemBeforePlace", false)
-    private val silentSwitch by boolean("SilentSwitch", true)
 
     private var slot: SlotData? = null
     private var blockSlot: SlotData? = null
@@ -140,27 +117,8 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
     private var oldSlot = 0
     private var placeCount = 0
     private var ups = 0
+    private var skipTick = false
     private var lastPlacePitchDiff = 0.0
-    
-    // Deep adaptive system state
-    private var currentStrategy = PlacementStrategy.INSTANT
-    private var currentMovementState = MovementState.STATIONARY
-    private var consecutiveFailedPlaces = 0
-    private var lastSuccessfulPlacementPos: BlockPos? = null
-    
-    // Performance monitoring
-    private var placementSuccessRate = 1.0
-    private var averagePlacementTime = 0.0
-    private var lastPlacementTimestamp = 0L
-    
-    // Movement analysis
-    private var lastVelocity = Vec3d.ZERO
-    private var velocityHistory = ArrayDeque<Vec3d>(maxOf = 10)
-    private var speedTrend = 0.0 // -1: decelerating, 0: stable, 1: accelerating
-    
-    // Confidence scoring
-    private var predictionConfidence = 1.0
-    private var lastPredictionAccuracy = 1.0
 
     override fun onEnabled() {
         placeCount = 0
@@ -176,37 +134,41 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         tellyJumpTicks = 0
         waitingForEagleSneak = false
         rot = null
+        skipTick = false
         lastPlacePitchDiff = 0.0
-        
-        // Reset deep adaptive system state
-        currentStrategy = PlacementStrategy.INSTANT
-        currentMovementState = MovementState.STATIONARY
-        consecutiveFailedPlaces = 0
-        lastSuccessfulPlacementPos = null
-        placementSuccessRate = 1.0
-        averagePlacementTime = 0.0
-        lastPlacementTimestamp = System.currentTimeMillis()
-        lastVelocity = Vec3d.ZERO
-        velocityHistory.clear()
-        speedTrend = 0.0
-        predictionConfidence = 1.0
-        lastPredictionAccuracy = 1.0
     }
 
     override fun onDisabled() {
-        SilentHotbar.resetSlot(this)
-        player.inventory.selectedSlot = oldSlot
+        // Restore the slot that was active when NewScaffold was enabled.
+        // The previous implementation assigned the saved slot and immediately
+        // overwrote it with oldSlot, making the first assignment useless and
+        // crashing if the module was disabled before initialization completed.
+        if (oldSlot in 0..8) {
+            player.inventory.selectedSlot = oldSlot
+            interaction.syncSelectedSlot()
+        }
+
         mc.options.sneakKey.isPressed = false
+        slot = null
         blockSlot = null
         blockData = null
         lastBlockData = null
-        // skipTick removed - dangerous mechanism eliminated
+        lastRotation = null
+        rot = null
+        canPlace = false
+        skipTick = false
+        waitingForEagleSneak = false
+        tellyJumpTicks = 0
+        rotateCount = 0
+        placeCount = 0
+        ups = 0
     }
 
     @Suppress("unused")
-    private val playerTickHandler = handler<PlayerTickEvent> {
-        // Removed dangerous skipTick mechanism that cancelled player ticks
-        // This was causing unpredictable player behavior
+    private val playerTickHandler = handler<PlayerTickEvent> { event ->
+        if (skipTick) {
+            event.cancelEvent()
+        }
     }
 
     @Suppress("unused")
@@ -276,7 +238,14 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 Rotation(player.yaw - 100f, RotationManager.serverRotation.pitch)
             }
         }
-        // Removed skipTick check - dangerous tick cancellation is no longer used
+        if (skipTick) {
+            return RotationUtils.getClosestToBlockFace(
+                blockData?.pos,
+                blockData?.facing,
+                RotationManager.serverRotation.yaw,
+                RotationManager.serverRotation.pitch
+            ) ?: Rotation(player.yaw, player.pitch)
+        }
         val diff: Double = RotationUtils.yawDiffDirectly(rotation.yaw, RotationManager.serverRotation.yaw)
         if (mode == Mode.TELLY) {
             if (mc.options.jumpKey.isPressed && noUpTelly) {
@@ -373,11 +342,10 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
             if (!canPlace) {
                 return
             }
-            val block: BlockHitResult? =
-                ClientRayTraceUtil.getFacedBlock(
-                    RotationManager.currentRotation?.yaw ?: player.yaw,
-                    RotationManager.currentRotation?.pitch ?: player.pitch
-                )
+            val block = ClientRayTraceUtil.getFacedBlock(
+                RotationManager.currentRotation?.yaw ?: player.yaw,
+                RotationManager.currentRotation?.pitch ?: player.pitch
+            ) ?: return
             if (!ClientRayTraceUtil.didHitBlockFace(
                     player,
                     RotationManager.currentRotation?.yaw ?: player.yaw,
@@ -389,8 +357,9 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
             ) {
                 return
             }
-            if (this.blockSlot!!.hand == Hand.MAIN_HAND) {
-                player.inventory.selectedSlot = this.blockSlot!!.slot
+            val activeBlockSlot = this.blockSlot ?: return
+            if (activeBlockSlot.hand == Hand.MAIN_HAND) {
+                player.inventory.selectedSlot = activeBlockSlot.slot.coerceIn(0, 8)
                 interaction.syncSelectedSlot()
             }
             if (duplicateRotPlace && abs(player.pitch - player.lastPitch) > 2.0) {
@@ -400,25 +369,20 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 }
             }
             if (interactItem) {
-                interaction.interactItem(player, Hand.MAIN_HAND)
+                interaction.interactItem(player, activeBlockSlot.hand)
             }
-            val result = interaction.interactBlock(player, this.blockSlot!!.hand, block)
+            val result = interaction.interactBlock(player, activeBlockSlot.hand, block)
             if (result == ActionResult.SUCCESS) {
                 placeCount++
-                lastPlacePosition = blockData!!.pos.offset(blockData!!.facing)
+                lastPlacePosition = blockData?.pos?.offset(blockData?.facing ?: return)
                 if (abs(player.pitch - player.lastPitch) > 0.0) {
                     lastPlacePitchDiff = abs(player.pitch - player.lastPitch).toDouble()
                 }
                 if (noSwing) {
-                    network.sendPacket(HandSwingC2SPacket(this.blockSlot!!.hand))
+                    network.sendPacket(HandSwingC2SPacket(activeBlockSlot.hand))
                 } else {
-                    player.swingHand(this.blockSlot!!.hand)
+                    player.swingHand(activeBlockSlot.hand)
                 }
-                // Record successful placement for adaptive strategy
-                recordPlacementResult(true)
-            } else {
-                // Record failed placement for adaptive strategy
-                recordPlacementResult(false)
             }
         }
     }
@@ -460,13 +424,28 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         if (mc.options.jumpKey.isPressed) {
             posY = player.blockY - 1.0
         }
-        
-        // Removed old position-based search that was conflicting with prediction logic
-        // This was causing placement to revert to current position after some time
-        
-        // Deep movement analysis and strategy selection
-        analyzeMovementState()
-        selectOptimalStrategy()
+        val possible: BlockData? = if (ClientRayTraceUtil.isIgnoredBlock(
+                world.getBlockState(
+                    BlockPos(
+                        floor(player.x).toInt(),
+                        floor(player.y).toInt(),
+                        floor(player.z).toInt()
+                    )
+                )
+            )
+        ) getBlockData(
+            BlockPos(
+                floor(player.x).toInt(),
+                posY.toInt(),
+                floor(player.z).toInt()
+            )
+        ) else null
+        // Do not keep an old placement target when the current search failed.
+        // Reusing the previous BlockData is particularly bad for Telly: the
+        // rotation can continue aiming at a block that is no longer valid.
+        blockData = possible
+        lastBlockData = possible
+
 
         if (mode == Mode.NORMAL) {
             canPlace = true
@@ -480,35 +459,27 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         }
 
         if (this.blockSlot!!.hand == Hand.MAIN_HAND) {
-            if (silentSwitch) {
-                SilentHotbar.selectSlotSilently(this, this.blockSlot!!.slot, 2)
-            } else {
-                player.inventory.selectedSlot = this.blockSlot!!.slot
-            }
+            player.inventory.selectedSlot = this.blockSlot!!.slot
         }
-        // Execute optimal placement based on deep analysis
-        val placement: BlockData? = when (currentStrategy) {
-            PlacementStrategy.INSTANT -> getInstantPlacement()
-            PlacementStrategy.PREDICTIVE -> getPredictivePlacement()
-            PlacementStrategy.ADAPTIVE -> getAdaptivePlacement()
-            PlacementStrategy.SURVIVAL -> getSurvivalPlacement()
-        }
-        
-        // One simulation pass gives us the two-tick prediction and avoids duplicate physics work.
-        val predictedState = simulatePlayerMovement(ticks = 2)
-        val predictedPos = predictedState.position
-        val predictedY = predictedPos.y
+        val simResult1 = simulatePlayerMovement(ticks = 1) // 玩家预测
         var reachable = true
-        val nextEyePos = predictedPos.add(0.0, player.standingEyeHeight.toDouble(), 0.0)
+        val nextEyePos: Vec3d = simResult1.position.add(0.0, player.standingEyeHeight.toDouble(), 0.0) // 1tick后的eye pos
+        val simResult2 = simulatePlayerMovement(ticks = 2) // 再预测2tick
+        val predictedY = simResult2.position.y // 2tick后的Y坐标
+        val placement: BlockData? = getBlockData(
+            BlockPos(
+                floor(player.x).toInt(), (player.blockY - 1), floor(
+                    player.z
+                ).toInt()
+            )
+        ) // 无samey搜寻方块
         var forceRotation = false
         if (placement != null) {
             if (safeMode && testOnGround && player.onGroundTicks == 1 && mc.options.jumpKey.isPressed) {
                 forceRotation = true
             }
-            
-            // Improved safeDistance check: use proper reach calculation instead of eye-to-center distance
-            val reachCheck = isPlacementReachable(placement, nextEyePos, predictedPos)
-            if (!reachCheck || placement.pos.y > predictedY) { // 这是大kb自救逻辑
+            val distance = nextEyePos.distanceTo(placement.pos.toCenterPos())
+            if (distance >= safeDistance || placement.pos.y > predictedY) { // 这是大kb自救逻辑
                 canPlace = true
                 reachable = false
                 lastBlockData = placement
@@ -523,12 +494,13 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
                 canPlace = true
                 reachable = false
                 posY = player.blockY - 1.0 // 普通下落自救
-                // Use predicted position for emergency placement instead of current position
                 lastBlockData = getBlockData(
-                    BlockPos(predictedBlockX, floor(posY).toInt(), predictedBlockZ),
-                    predictedBlockX,
-                    predictedBlockZ
-                ) ?: getVelocityAwareFallback(predictedPos, floor(posY).toInt())
+                    BlockPos(
+                        floor(player.x).toInt(),
+                        floor(posY).toInt(),
+                        floor(player.z).toInt()
+                    )
+                )
                 blockData = lastBlockData
             }
         }
@@ -536,7 +508,7 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
             if (debug && rotateCount == 1) {
                 notifyAsMessage(ModuleNewScaffold, "Clutching...")
             }
-            // Removed skipTick = true - dangerous tick cancellation removed
+            skipTick = true
             rotateCount++
         } else {
             rotateCount = 0
@@ -553,7 +525,7 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
             }
         }
         if (didHitBlockFace(blockData, rot!!)) {
-            // skipTick removal - no longer needed
+            skipTick = false
             rotateCount = 0
         }
         rot = rot?.normalize()
@@ -649,14 +621,14 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return bestSlot
     }
 
-    private fun getBlockData(pos: BlockPos, predictedX: Int = player.blockX, predictedZ: Int = player.blockZ): BlockData? {
+    private fun getBlockData(pos: BlockPos): BlockData? {
         val data: BlockData
 
         if (getPos(pos) == null) {
             val blockPos = getBlockPos()
             if (blockPos == null) return null
 
-            val direction = getPlaceSide(blockPos, predictedX, predictedZ)
+            val direction = getPlaceSide(blockPos)
             if (direction == null) return null
 
             data = BlockData(blockPos, direction)
@@ -671,91 +643,154 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return null
     }
 
-    private fun getPlaceSide(blockPos: BlockPos, predictedX: Int = player.blockX, predictedZ: Int = player.blockZ): Direction? {
-        // Use predicted position for placement side selection instead of current position
-        val playerPos = BlockPos(predictedX, player.blockY, predictedZ)
-        
-        var best: Direction? = null
-        var bestDistance = Double.POSITIVE_INFINITY
+    private fun getPlaceSide(blockPos: BlockPos): Direction? {
+        val blockData = ArrayList<BlockData>()
 
-        for (face in arrayOf(Direction.EAST, Direction.NORTH, Direction.SOUTH, Direction.WEST)) {
-            val placePos = blockPos.offset(face)
-            if (placePos == playerPos || !isAirBlock(placePos)) continue
-            val supportPos = placePos.offset(face)
-            if (!ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(supportPos))) continue
+        val pos = BlockPos(
+            floor(player.x).toInt(),
+            floor(player.y).toInt(),
+            floor(player.z).toInt()
+        )
 
-            val distance = placePos.getSquaredDistance(playerPos)
-            if (distance < bestDistance) {
-                bestDistance = distance
-                best = face
-            }
+        if (isAirBlock(blockPos.east()) && blockPos.east() != pos) {
+            blockData.add(BlockData(blockPos.east(), Direction.EAST))
         }
-        return best
+
+        if (isAirBlock(blockPos.north()) && blockPos.north() != pos) {
+            blockData.add(BlockData(blockPos.north(), Direction.NORTH))
+        }
+
+        if (isAirBlock(blockPos.south()) && blockPos.south() != pos) {
+            blockData.add(BlockData(blockPos.south(), Direction.SOUTH))
+        }
+
+        if (isAirBlock(blockPos.west()) && blockPos.west() != pos) {
+            blockData.add(BlockData(blockPos.west(), Direction.WEST))
+        }
+
+        if (blockData.isEmpty()) return null
+
+        blockData.sortWith(Comparator.comparingDouble { vec3: BlockData ->
+            vec3.pos.getSquaredDistance(pos)
+        })
+
+        blockData.removeIf { blockData1: BlockData ->
+            !ClientRayTraceUtil.isIgnoredBlock(
+                world.getBlockState(
+                    blockData1.pos.offset(blockData1.facing)
+                )
+            )
+        }
+
+        return blockData.firstOrNull()?.facing
     }
 
+
     private fun getBlockPos(): BlockPos? {
-        // Simplified approach: find nearest solid block for basic support
-        val px = player.blockX
-        val py = player.blockY
-        val pz = player.blockZ
+        val playerPos = BlockPos(
+            floor(player.x).toInt(),
+            floor(player.y).toInt(),
+            floor(player.z).toInt()
+        )
 
-        var best: BlockPos? = null
-        var bestDistance = Double.POSITIVE_INFINITY
+        val positions = ArrayList<BlockPos?>()
 
-        // Limited search range for performance and reliability
-        for (x in 3 downTo -2) {
-            for (y in 3 downTo -2) {
-                if (py + y >= py) continue
-                for (z in 3 downTo -2) {
-                    val pos = BlockPos(px + x, py + y, pz + z)
-                    if (!isPosSolid(pos)) continue
-                    
-                    val distance = pos.getSquaredDistance(px.toDouble(), py.toDouble(), pz.toDouble())
-                    if (distance < bestDistance) {
-                        bestDistance = distance
-                        best = pos
-                    }
+        val searchBlock = searchBlocks()
+        for (block in searchBlock.entries) {
+            if (isPosSolid(block.key)) {
+                positions.add(block.key)
+            }
+        }
+
+        positions.removeIf { pos: BlockPos? -> pos!!.y >= playerPos.y }
+
+        if (positions.isEmpty()) return null
+
+        positions.sortWith(Comparator.comparingDouble<BlockPos?>(ToDoubleFunction { vec3: BlockPos? ->
+            vec3!!.getSquaredDistance(
+                playerPos
+            )
+        }))
+
+        return positions.first()
+    }
+
+    private fun isAirBlock(blockPos: BlockPos?): Boolean {
+        return ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(blockPos))
+    }
+
+    private fun getBlock(pos: BlockPos?): Block {
+        return world.getBlockState(pos).block
+    }
+
+    private fun searchBlocks(): MutableMap<BlockPos, Block> {
+        val blocks = HashMap<BlockPos, Block>()
+        for (x in 5 downTo -4) {
+            for (y in 5 downTo -4) {
+                for (z in 5 downTo -4) {
+                    val blockPos = BlockPos(player.blockX + x, player.blockY + y, player.blockZ + z)
+                    val block = getBlock(blockPos)
+                    blocks.put(blockPos, block)
                 }
             }
         }
-        return best
-    }
-
-    // Removed complex scoring function - adaptive strategy handles selection instead
-
-    private fun isAirBlock(blockPos: BlockPos?): Boolean {
-        return blockPos != null && ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(blockPos))
+        return blocks
     }
 
     private fun getPos(pos: BlockPos): BlockData? {
-        if (isPosSolid(pos.add(-1, 0, 0))) return BlockData(pos.add(-1, 0, 0), Direction.EAST)
-        if (isPosSolid(pos.add(1, 0, 0))) return BlockData(pos.add(1, 0, 0), Direction.WEST)
-        if (isPosSolid(pos.add(0, 0, 1))) return BlockData(pos.add(0, 0, 1), Direction.NORTH)
-        if (isPosSolid(pos.add(0, 0, -1))) return BlockData(pos.add(0, 0, -1), Direction.SOUTH)
-        if (isPosSolid(pos.add(0, -1, 0))) return BlockData(pos.add(0, -1, 0), Direction.UP)
+        if (isPosSolid(pos.add(-1, 0, 0))) {
+            return BlockData(pos.add(-1, 0, 0), Direction.EAST)
+        } else if (isPosSolid(pos.add(1, 0, 0))) {
+            return BlockData(pos.add(1, 0, 0), Direction.WEST)
+        } else if (isPosSolid(pos.add(0, 0, 1))) {
+            return BlockData(pos.add(0, 0, 1), Direction.NORTH)
+        } else if (isPosSolid(pos.add(0, 0, -1))) {
+            return BlockData(pos.add(0, 0, -1), Direction.SOUTH)
+        } else if (isPosSolid(pos.add(0, -1, 0))) {
+            return BlockData(pos.add(0, -1, 0), Direction.UP)
+        }
         return null
     }
 
     private fun isPosSolid(pos: BlockPos?): Boolean {
-        if (pos == null) return false
-        val state = world.getBlockState(pos)
-        val block = state.block
-        if (block is TrapdoorBlock || block is DoorBlock || block is FenceGateBlock) return false
-        return block !in NON_SUPPORT_BLOCKS && !ClientRayTraceUtil.isIgnoredBlock(state)
-    }
-
-    private val NON_SUPPORT_BLOCKS: Set<Block> by lazy {
-        setOf(
-            Blocks.ANVIL, Blocks.AIR, Blocks.WATER, Blocks.FIRE, Blocks.LAVA,
-            Blocks.SKELETON_SKULL, Blocks.OAK_SIGN, Blocks.TRAPPED_CHEST, Blocks.CHEST,
-            Blocks.ENCHANTING_TABLE, Blocks.ENDER_CHEST, Blocks.CRAFTING_TABLE,
-            Blocks.DAYLIGHT_DETECTOR, Blocks.COBWEB, Blocks.SHORT_GRASS, Blocks.FLOWER_POT,
-            Blocks.CHORUS_FLOWER, Blocks.SUNFLOWER, Blocks.CORNFLOWER, Blocks.TORCHFLOWER,
-            Blocks.OAK_BUTTON, Blocks.ACACIA_BUTTON, Blocks.BIRCH_BUTTON, Blocks.CRIMSON_BUTTON,
-            Blocks.CHERRY_BUTTON, Blocks.DARK_OAK_BUTTON, Blocks.JUNGLE_BUTTON,
-            Blocks.STONE_BUTTON, Blocks.WARPED_BUTTON, Blocks.SPRUCE_BUTTON, Blocks.NOTE_BLOCK,
+        val block = world.getBlockState(pos).block
+        if (block is TrapdoorBlock || block is DoorBlock || block is FenceGateBlock) {
+            return false
+        }
+        return !listOf(
+            Blocks.ANVIL,
+            Blocks.AIR,
+            Blocks.WATER,
+            Blocks.FIRE,
+            Blocks.LAVA,
+            Blocks.SKELETON_SKULL,
+            Blocks.OAK_SIGN,
+            Blocks.TRAPPED_CHEST,
+            Blocks.CHEST,
+            Blocks.ENCHANTING_TABLE,
+            Blocks.ENDER_CHEST,
+            Blocks.CRAFTING_TABLE,
+            Blocks.DAYLIGHT_DETECTOR,
+            Blocks.COBWEB,
+            Blocks.SHORT_GRASS,
+            Blocks.FLOWER_POT,
+            Blocks.CHORUS_FLOWER,
+            Blocks.SUNFLOWER,
+            Blocks.CORNFLOWER,
+            Blocks.TORCHFLOWER,
+            Blocks.OAK_BUTTON,
+            Blocks.ACACIA_BUTTON,
+            Blocks.BIRCH_BUTTON,
+            Blocks.CRIMSON_BUTTON,
+            Blocks.CHERRY_BUTTON,
+            Blocks.DARK_OAK_BUTTON,
+            Blocks.JUNGLE_BUTTON,
+            Blocks.STONE_BUTTON,
+            Blocks.WARPED_BUTTON,
+            Blocks.SPRUCE_BUTTON,
+            Blocks.NOTE_BLOCK,
             Blocks.PLAYER_HEAD
-        )
+        ).contains(block) && !ClientRayTraceUtil.isIgnoredBlock(world.getBlockState(pos))
     }
 
     private data class SlotData(val slot: Int, val hand: Hand) {
@@ -779,344 +814,4 @@ object ModuleNewScaffold : ClientModule("NewScaffold", Category.BMW) {
         return player.world.getBlockState(pos).block
     }
 
-    private fun getVelocityAwareFallback(predictedPos: Vec3d, targetY: Int): BlockData? {
-        val velX = player.velocity.x
-        val velZ = player.velocity.z
-        val speed = kotlin.math.sqrt(velX * velX + velZ * velZ)
-        
-        if (speed < 0.1) return null // No significant movement
-        
-        // Normalize velocity direction
-        val dirX = velX / speed
-        val dirZ = velZ / speed
-        
-        // Search along velocity direction first (forward cone)
-        val predictedBlockX = floor(predictedPos.x).toInt()
-        val predictedBlockZ = floor(predictedPos.z).toInt()
-        
-        // Priority order: along movement direction, then expanding
-        val searchOffsets = listOf(
-            // Forward direction (2 blocks ahead)
-            Pair(2, 0), Pair(0, 2), Pair(1, 1), Pair(1, -1), Pair(-1, 1),
-            // Forward direction (1 block ahead)  
-            Pair(1, 0), Pair(0, 1), Pair(-1, 0), Pair(0, -1),
-            // Diagonal and nearby
-            Pair(2, 1), Pair(1, 2), Pair(-2, 1), Pair(-1, 2),
-            Pair(2, -1), Pair(1, -2), Pair(-2, -1), Pair(-1, -2),
-            // Further ahead for high speed
-            Pair(3, 0), Pair(0, 3), Pair(2, 2), Pair(-2, 2), Pair(2, -2), Pair(-2, -2)
-        )
-        
-        // Sort offsets by alignment with velocity direction
-        val sortedOffsets = searchOffsets.sortedByDescending { (dx, dz) ->
-            val dotProduct = dx * dirX + dz * dirZ
-            dotProduct
-        }
-        
-        for ((dx, dz) in sortedOffsets) {
-            val candidatePos = BlockPos(predictedBlockX + dx, targetY, predictedBlockZ + dz)
-            val blockData = getBlockData(candidatePos, predictedBlockX, predictedBlockZ)
-            if (blockData != null) {
-                return blockData
-            }
-        }
-        
-        return null
-    }
-
-    private fun isPlacementReachable(placement: BlockData, eyePos: Vec3d, predictedPos: Vec3d): Boolean {
-        // Calculate actual reach distance based on ray trace and placement face
-        val placementFaceCenter = placement.pos.toCenterPos().add(
-            placement.facing.vector.x * 0.5,
-            placement.facing.vector.y * 0.5, 
-            placement.facing.vector.z * 0.5
-        )
-        
-        val actualDistance = eyePos.distanceTo(placementFaceCenter)
-        
-        // Also check if the predicted player position can reach this placement
-        val predictedDistance = predictedPos.distanceTo(placementFaceCenter)
-        
-        // Use the more conservative distance check
-        val maxDistance = kotlin.math.max(actualDistance, predictedDistance)
-        
-        return maxDistance < safeDistance
-    }
-
-    // ========== DEEP ADAPTIVE PLACEMENT SYSTEM ==========
-    
-    private fun analyzeMovementState() {
-        val currentVelocity = player.velocity
-        val currentSpeed = kotlin.math.sqrt(currentVelocity.x * currentVelocity.x + currentVelocity.z * currentVelocity.z)
-        
-        // Update velocity history for trend analysis
-        velocityHistory.addLast(currentVelocity)
-        if (velocityHistory.size > 10) velocityHistory.removeFirst()
-        
-        // Calculate speed trend
-        if (velocityHistory.size >= 3) {
-            val recentSpeeds = velocityHistory.takeLast(3).map { 
-                kotlin.math.sqrt(it.x * it.x + it.z * it.z) 
-            }
-            speedTrend = when {
-                recentSpeeds[2] > recentSpeeds[1] + 0.05 -> 1.0 // Accelerating
-                recentSpeeds[2] < recentSpeeds[1] - 0.05 -> -1.0 // Decelerating
-                else -> 0.0 // Stable
-            }
-        }
-        
-        // Classify movement state with precision
-        currentMovementState = when {
-            currentVelocity.y < -0.2 -> MovementState.FALLING
-            currentVelocity.y > 0.2 -> MovementState.JUMPING
-            currentSpeed < 0.05 -> MovementState.STATIONARY
-            isSignificantDirectionChange() -> MovementState.TURNING
-            speedTrend > 0.5 -> MovementState.ACCELERATING
-            speedTrend < -0.5 -> MovementState.DECELERATING
-            isDiagonalMovement(currentSpeed) -> if (currentSpeed > 0.3) MovementState.DIAGONAL_FAST else MovementState.DIAGONAL_SLOW
-            currentSpeed > 0.3 -> MovementState.LINEAR_FAST
-            else -> MovementState.LINEAR_SLOW
-        }
-        
-        lastVelocity = currentVelocity
-    }
-    
-    private fun isSignificantDirectionChange(): Boolean {
-        if (velocityHistory.size < 2) return false
-        
-        val current = velocityHistory.last()
-        val previous = velocityHistory[velocityHistory.size - 2]
-        
-        val currentAngle = kotlin.math.atan2(current.z, current.x)
-        val previousAngle = kotlin.math.atan2(previous.z, previous.x)
-        
-        val angleDiff = kotlin.math.abs(currentAngle - previousAngle)
-        return angleDiff > 0.5 // Significant turn (>~30 degrees)
-    }
-    
-    private fun isDiagonalMovement(speed: Double): Boolean {
-        if (speed < 0.1) return false
-        
-        val velX = kotlin.math.abs(player.velocity.x)
-        val velZ = kotlin.math.abs(player.velocity.z)
-        
-        // More precise diagonal detection: both components >25% of speed
-        return velX > speed * 0.25 && velZ > speed * 0.25
-    }
-    
-    private fun selectOptimalStrategy() {
-        // Deep strategy selection based on comprehensive state analysis
-        currentStrategy = when {
-            // Survival: falling or critical failure
-            currentMovementState == MovementState.FALLING || consecutiveFailedPlaces >= 4 -> PlacementStrategy.SURVIVAL
-            
-            // Predictive: high-speed diagonal with good confidence
-            (currentMovementState == MovementState.DIAGONAL_FAST || currentMovementState == MovementState.LINEAR_FAST) 
-            && predictionConfidence > 0.7 -> PlacementStrategy.PREDICTIVE
-            
-            // Adaptive: complex movement patterns
-            currentMovementState == MovementState.TURNING || 
-            currentMovementState == MovementState.ACCELERATING ||
-            currentMovementState == MovementState.DECELERATING -> PlacementStrategy.ADAPTIVE
-            
-            // Instant: reliable conditions - fastest and most accurate
-            else -> PlacementStrategy.INSTANT
-        }
-        
-        // Adjust confidence based on recent performance
-        if (placementSuccessRate < 0.5) {
-            // Reduce prediction confidence if performance is poor
-            predictionConfidence *= 0.9
-        } else if (placementSuccessRate > 0.9) {
-            // Increase confidence if performing well
-            predictionConfidence = kotlin.math.min(1.0, predictionConfidence * 1.05)
-        }
-    }
-    
-    private fun getInstantPlacement(): BlockData? {
-        // Fastest: direct current position placement
-        val targetPos = BlockPos(player.blockX, player.blockY - 1, player.blockZ)
-        return getBlockData(targetPos, player.blockX, player.blockZ)
-    }
-    
-    private fun getPredictivePlacement(): BlockData? {
-        // Multi-tick prediction with confidence scoring
-        val speed = kotlin.math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z)
-        
-        if (speed < 0.1) return getInstantPlacement()
-        
-        // Dynamic look-ahead based on speed and confidence
-        val baseLookAhead = if (speed > 0.4) 2 else 1
-        val confidenceMultiplier = (predictionConfidence * 2).toInt().coerceIn(1, 3)
-        val lookAheadTicks = baseLookAhead * confidenceMultiplier
-        
-        val predictedState = simulatePlayerMovement(ticks = lookAheadTicks)
-        val predictedPos = predictedState.position
-        
-        val predBlockX = floor(predictedPos.x).toInt()
-        val predBlockZ = floor(predictedPos.z).toInt()
-        
-        // Try predicted position with confidence weighting
-        val predictedPlacement = getBlockData(
-            BlockPos(predBlockX, player.blockY - 1, predBlockZ),
-            predBlockX,
-            predBlockZ
-        )
-        
-        if (predictedPlacement != null && predictionConfidence > 0.6) {
-            return predictedPlacement
-        }
-        
-        // Fallback to intermediate positions
-        for (tick in 1 until lookAheadTicks) {
-            val intermediateState = simulatePlayerMovement(ticks = tick)
-            val intermediatePos = intermediateState.position
-            val interX = floor(intermediatePos.x).toInt()
-            val interZ = floor(intermediatePos.z).toInt()
-            
-            val intermediatePlacement = getBlockData(
-                BlockPos(interX, player.blockY - 1, interZ),
-                interX,
-                interZ
-            )
-            
-            if (intermediatePlacement != null) {
-                return intermediatePlacement
-            }
-        }
-        
-        // Final fallback to velocity-aware search
-        return getVelocityAwareFallback(predictedPos, player.blockY - 1)
-    }
-    
-    private fun getAdaptivePlacement(): BlockData? {
-        // Hybrid approach: combine instant and predictive based on real-time analysis
-        val instantResult = getInstantPlacement()
-        
-        // If instant placement available and confidence is high, use it
-        if (instantResult != null && predictionConfidence > 0.8) {
-            return instantResult
-        }
-        
-        // Otherwise use predictive with safety checks
-        val predictiveResult = getPredictivePlacement()
-        
-        // Cross-validation: prefer result that's closer to expected path
-        if (instantResult != null && predictiveResult != null) {
-            val instantDist = instantResult.pos.getSquaredDistance(player.pos)
-            val predictiveDist = predictiveResult.pos.getSquaredDistance(player.pos)
-            
-            // Choose based on movement state
-            return when (currentMovementState) {
-                MovementState.ACCELERATING -> predictiveResult // Look ahead when accelerating
-                MovementState.DECELERATING -> instantResult // Stay close when decelerating
-                MovementState.TURNING -> instantResult // Stay stable when turning
-                else -> if (predictiveDist < instantDist * 1.5) predictiveResult else instantResult
-            }
-        }
-        
-        return predictiveResult ?: instantResult
-    }
-    
-    private fun getSurvivalPlacement(): BlockData? {
-        // Maximum reach emergency placement with comprehensive search
-        val predictedState = simulatePlayerMovement(ticks = 1)
-        val predictedPos = predictedState.position
-        val predBlockX = floor(predictedPos.x).toInt()
-        val predBlockZ = floor(predictedPos.z).toInt()
-        
-        // Comprehensive emergency candidate set with priority ordering
-        val emergencyCandidates = mutableListOf<Pair<BlockPos, Double>>()
-        
-        // Primary: below positions (highest priority)
-        emergencyCandidates.add(Pair(BlockPos(predBlockX, player.blockY - 1, predBlockZ), 1.0))
-        emergencyCandidates.add(Pair(BlockPos(player.blockX, player.blockY - 1, player.blockZ), 0.9))
-        
-        // Secondary: movement direction (based on velocity)
-        val velX = player.velocity.x
-        val velZ = player.velocity.z
-        val speed = kotlin.math.sqrt(velX * velX + velZ * velZ)
-        
-        if (speed > 0.05) {
-            val dirX = if (speed > 0.001) velX / speed else 0.0
-            val dirZ = if (speed > 0.001) velZ / speed else 0.0
-            
-            // Forward positions
-            emergencyCandidates.add(Pair(BlockPos(predBlockX + dirX.toInt(), player.blockY - 1, predBlockZ + dirZ.toInt()), 0.8))
-            emergencyCandidates.add(Pair(BlockPos(predBlockX + (dirX * 2).toInt(), player.blockY - 1, predBlockZ + (dirZ * 2).toInt()), 0.7))
-        }
-        
-        // Tertiary: cardinal directions around player
-        for (dx in -1..1) {
-            for (dz in -1..1) {
-                if (dx == 0 && dz == 0) continue
-                val pos = BlockPos(predBlockX + dx, player.blockY - 1, predBlockZ + dz)
-                val priority = 0.6 - kotlin.math.sqrt((dx * dx + dz * dz).toDouble()) * 0.1
-                emergencyCandidates.add(Pair(pos, priority))
-            }
-        }
-        
-        // Sort by priority and try candidates
-        emergencyCandidates.sortByDescending { it.second }
-        
-        for ((candidate, _) in emergencyCandidates) {
-            val placement = getBlockData(candidate, predBlockX, predBlockZ)
-            if (placement != null) {
-                return placement
-            }
-        }
-        
-        // Ultimate fallback: extended velocity-aware search
-        return getVelocityAwareFallback(predictedPos, player.blockY - 1)
-    }
-    
-    private fun recordPlacementResult(success: Boolean) {
-        val currentTime = System.currentTimeMillis()
-        val placementTime = if (lastPlacementTimestamp > 0) currentTime - lastPlacementTimestamp else 0L
-        
-        // Update performance metrics
-        placementSuccessRate = if (placementSuccessRate == 0.0) {
-            if (success) 1.0 else 0.0
-        } else {
-            placementSuccessRate * 0.9 + (if (success) 1.0 else 0.0) * 0.1
-        }
-        
-        if (placementTime > 0) {
-            averagePlacementTime = if (averagePlacementTime == 0.0) {
-                placementTime.toDouble()
-            } else {
-                averagePlacementTime * 0.8 + placementTime * 0.2
-            }
-        }
-        
-        lastPlacementTimestamp = currentTime
-        
-        if (success) {
-            consecutiveFailedPlaces = 0
-            if (blockData != null) {
-                lastSuccessfulPlacementPos = blockData!!.pos
-                
-                // Update prediction accuracy if we used predictive strategy
-                if (currentStrategy == PlacementStrategy.PREDICTIVE) {
-                    val predictedState = simulatePlayerMovement(ticks = 1)
-                    val predictedPos = predictedState.position
-                    val actualPos = blockData!!.pos.toCenterPos()
-                    val error = predictedPos.distanceTo(actualPos)
-                    lastPredictionAccuracy = kotlin.math.max(0.0, 1.0 - error / 2.0)
-                    predictionConfidence = predictionConfidence * 0.7 + lastPredictionAccuracy * 0.3
-                }
-            }
-        } else {
-            consecutiveFailedPlaces++
-            
-            // Reduce confidence on failure
-            predictionConfidence *= 0.95
-            
-            if (consecutiveFailedPlaces >= 5) {
-                // Force strategy reset and confidence recovery
-                currentStrategy = PlacementStrategy.INSTANT
-                consecutiveFailedPlaces = 0
-                predictionConfidence = 0.5 // Reset to moderate confidence
-            }
-        }
-    }
+}

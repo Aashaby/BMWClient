@@ -45,7 +45,7 @@
             transition: ease background-color 0.7s;
 
             &.active {
-                background-color: rgb(var(--accent-color));
+                background-color: $accent-color;
             }
         }
     }

@@ -41,14 +41,27 @@ import net.ccbluex.liquidbounce.utils.entity.moving
  */
 object ScaffoldTellyFeature : ToggleableConfigurable(ScaffoldNormalTechnique, "Telly", false) {
 
+    /**
+     * Keeps the normal scaffold rotation out of the way during the straight
+     * part of a telly jump. The old implementation also required
+     * `ticksUntilJump >= jumpTicks`; that counter is reset immediately by
+     * PlayerAfterJumpEvent, so the condition was effectively false during
+     * the first air ticks where it mattered most.
+     */
     val doNotAim: Boolean
-        get() = player.airTicks <= straightTicks &&
-                ticksUntilJump >= jumpTicks &&
+        get() = enabled &&
+                player.airTicks in 1..straightTicks &&
                 !(ModuleScaffold.isTowering && aimOnTower)
 
-    /** New val to determine if the player is telly bridging */
+    /**
+     * True while the Telly controller is in its pre-jump window.
+     *
+     * This deliberately remains a grounded-state signal: the jump is injected
+     * from MovementInputEvent, and PlayerAfterJumpEvent resets the counter as
+     * soon as the jump is accepted.
+     */
     val isTellyBridging: Boolean
-        get() = ticksUntilJump >= jumpTicks && player.moving && enabled
+        get() = enabled && player.moving && player.isOnGround && ticksUntilJump >= jumpTicks
 
     private var ticksUntilJump = 0
 
@@ -60,22 +73,27 @@ object ScaffoldTellyFeature : ToggleableConfigurable(ScaffoldNormalTechnique, "T
 
     @Suppress("unused")
     private val gameHandler = handler<GameTickEvent> {
+        if (!enabled || !player.moving || ModuleScaffold.blockCount <= 0) {
+            ticksUntilJump = 0
+            return@handler
+        }
+
         if (player.isOnGround) {
-            ticksUntilJump++
+            ticksUntilJump = (ticksUntilJump + 1).coerceAtMost(jumpTicks.coerceAtLeast(1))
         }
     }
 
     @Suppress("unused")
     private val movementInputHandler = handler<MovementInputEvent> { event ->
-        if (!player.moving || ModuleScaffold.blockCount <= 0 || !player.isOnGround) {
+        if (!enabled || !player.moving || ModuleScaffold.blockCount <= 0 || !player.isOnGround) {
             return@handler
         }
 
-        val isStraight = RotationManager.currentRotation == null || straightTicks == 0
-
+        // Jump scheduling happens while grounded. The rotation suppression window
+        // starts only after the jump (airTicks >= 1), so it must not be reused here.
         when (resetMode) {
             Mode.REVERSE -> event.jump = true
-            Mode.RESET -> if (isStraight && ticksUntilJump >= jumpTicks) event.jump = true
+            Mode.RESET -> if (ticksUntilJump >= jumpTicks) event.jump = true
         }
     }
 

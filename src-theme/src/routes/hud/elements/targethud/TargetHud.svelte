@@ -1,13 +1,13 @@
 <script lang="ts">
     import ArmorStatus from "./ArmorStatus.svelte";
     import { listen } from "../../../../integration/ws.js";
-    import type { TargetData, PlayerData, Vec3 } from "../../../../integration/types";
+    import type { PlayerData, Vec3 } from "../../../../integration/types";
     import { REST_BASE } from "../../../../integration/host";
     import { fly } from "svelte/transition";
     import HealthProgress from "./HealthProgress.svelte";
     import type { TargetChangeEvent } from "../../../../integration/events";
 
-    let target: TargetData | null = null;
+    let target: PlayerData | null = null;
     let visible = true;
     let playerPosition: Vec3 = { x: 0, y: 0, z: 0 };
     let lastX = 0, lastZ = 0;
@@ -50,9 +50,10 @@
     function getHealthStatus(): { letter: string, color: string } {
         if (playerData && target) {
             const playerHealth = playerData.actualHealth + playerData.absorption;
-            const targetHealth = target.health + target.absorption;
+            const targetHealth = target.actualHealth + target.absorption;
             const letter = playerHealth > targetHealth ? "W" : "L";
-            return { letter, color: letter === "W" ? "rgb(var(--accent-color))" : "#ff5959" };
+            const color = letter === "W" ? "#00FF00" : "#FF0000"; // Яркие зеленый и красный
+            return { letter, color };
         }
         return { letter: "", color: "" };
     }
@@ -65,16 +66,16 @@
         <div class="avatar"></div>
         <div class="info">
             <div class="name-status">
-                <span class="name">{target.name}</span><span class="type">{target.type.replace("minecraft:", "")}</span>
+                <span class="name">{target.username}</span>
                 <span class="health-status" style="color: {getHealthStatus().color};">
                     {getHealthStatus().letter}
                 </span>
             </div>
-            <HealthProgress maxHealth={target.maxHealth + target.absorption} health={target.health + target.absorption} />
+            <HealthProgress maxHealth={target.maxHealth + target.absorption} health={target.actualHealth + target.absorption} />
             <div class="stats-line">
                 <div class="hp-container">
                     <span class="hp">
-                        {((target.health + target.absorption) / (target.maxHealth + target.absorption) * 20).toFixed(1)}
+                        {((target.actualHealth + target.absorption) / (target.maxHealth + target.absorption) * 20).toFixed(1)}
                         <span class="heart">♥</span>
                     </span>
                 </div>
@@ -150,12 +151,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .type {
-    font-size: 10px;
-    opacity: 0.55;
-    margin-right: 6px;
   }
 
   .health-status {

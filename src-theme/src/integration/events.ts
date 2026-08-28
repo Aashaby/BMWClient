@@ -3,7 +3,7 @@ import type {
     Component,
     ConfigurableSetting,
     ItemStack, MinecraftKey, MinecraftKeyboardKey, MinecraftMouseKey,
-    PlayerData, TargetData,
+    PlayerData,
     Proxy,
     Screen,
     Server,
@@ -135,7 +135,7 @@ export interface KeyEvent {
 }
 
 export interface TargetChangeEvent {
-    target: TargetData | null;
+    target: PlayerData | null;
 }
 
 export interface BlockCountChangeEvent {

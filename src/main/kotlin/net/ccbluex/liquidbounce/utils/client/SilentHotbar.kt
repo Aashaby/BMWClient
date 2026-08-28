@@ -21,6 +21,7 @@ package net.ccbluex.liquidbounce.utils.client
 import net.ccbluex.liquidbounce.event.EventListener
 import net.ccbluex.liquidbounce.event.EventManager
 import net.ccbluex.liquidbounce.event.events.GameTickEvent
+import net.ccbluex.liquidbounce.event.events.WorldChangeEvent
 import net.ccbluex.liquidbounce.event.events.SelectHotbarSlotSilentlyEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
@@ -47,20 +48,24 @@ object SilentHotbar : EventListener {
     /**
      * If [slot] is not [OffHandSlot], select it silently for duration of [ticksUntilReset].
      */
-    fun selectSlotSilently(requester: Any?, slot: HotbarItemSlot, ticksUntilReset: Int) {
-        if (slot !is OffHandSlot) {
-            selectSlotSilently(requester, slot.hotbarSlot, ticksUntilReset)
+    fun selectSlotSilently(requester: Any?, slot: HotbarItemSlot, ticksUntilReset: Int): Boolean {
+        if (slot is OffHandSlot) {
+            return false
         }
+        return selectSlotSilently(requester, slot.hotbarSlot, ticksUntilReset)
     }
 
-    fun selectSlotSilently(requester: Any?, slot: Int, ticksUntilReset: Int) {
-        val event = EventManager.callEvent(SelectHotbarSlotSilentlyEvent(requester, slot))
+    fun selectSlotSilently(requester: Any?, slot: Int, ticksUntilReset: Int): Boolean {
+        val safeSlot = slot.coerceIn(0, 8)
+        val safeResetTicks = ticksUntilReset.coerceAtLeast(0)
+        val event = EventManager.callEvent(SelectHotbarSlotSilentlyEvent(requester, safeSlot))
         if (event.isCancelled) {
-            return
+            return false
         }
 
-        hotbarState = SilentHotbarState(slot, requester, ticksUntilReset, clientsideSlot)
+        hotbarState = SilentHotbarState(safeSlot, requester, safeResetTicks, clientsideSlot)
         ticksSinceLastUpdate = 0
+        return true
     }
 
     fun resetSlot(requester: Any?) {
@@ -75,6 +80,16 @@ object SilentHotbar : EventListener {
      * Returns if the slot is currently getting modified by a given requester
      */
     fun isSlotModifiedBy(requester: Any?) = hotbarState?.requester == requester
+
+
+    @Suppress("unused")
+    private val worldChangeHandler = handler<WorldChangeEvent> {
+        // Never carry a server-side slot override into a new world/session.
+        // This prevents modules that were disabled/disconnected mid-swap from
+        // leaving the next session with a stale enforced slot.
+        hotbarState = null
+        ticksSinceLastUpdate = 0
+    }
 
     @Suppress("unused")
     private val tickHandler = handler<GameTickEvent>(priority = 1001) {
