@@ -175,13 +175,13 @@ data class BlockTargetPlan(
     /**
      * cosine of the angle between the expected player's eye position and the normal of the targeted face.
      */
-    fun calculateAngleToPlayerEyeCosine(playerPos: Vec3d): Double {
+    fun calculateAngleToPlayerEyeCosine(playerPos: Vec3d, pose: EntityPose): Double {
         // The placement search may be evaluating a predicted pose (e.g. sneaking).
         // Using the current standing eye height here makes face scoring disagree
         // with the rotation calculation below and is especially noticeable near
         // edges / slabs while Telly or Eagle changes pose.
         val deltaToPlayerPos = playerPos
-            .add(0.0, player.getEyeHeight(this.pose).toDouble(), 0.0)
+            .add(0.0, player.getEyeHeight(pose).toDouble(), 0.0)
             .subtract(targetPositionOnBlock)
 
         return deltaToPlayerPos.dotProduct(Vec3d.of(interactionDirection.vector)) / deltaToPlayerPos.length()
@@ -208,7 +208,10 @@ private fun findBestTargetPlanForTargetPosition(
 
         // Check if the target face is pointing away from the player
         if (!targetFindingOptions.faceHandlingOptions.considerFacingAwayFaces &&
-            targetPlan.calculateAngleToPlayerEyeCosine(targetFindingOptions.playerLocationOnPlacement.position) < 0) {
+            targetPlan.calculateAngleToPlayerEyeCosine(
+                targetFindingOptions.playerLocationOnPlacement.position,
+                targetFindingOptions.playerLocationOnPlacement.pose
+            ) < 0) {
             return@mapNotNull null
         }
 
