@@ -87,7 +87,7 @@ object ModuleBlink : ClientModule("Blink", Category.PLAYER) {
 
         // Use the clone's own world. During a dimension/world transition `world`
         // may already point somewhere else while the dummy still belongs to the old one.
-        world.removeEntity(clone.id, Entity.RemovalReason.DISCARDED)
+        clone.world.removeEntity(clone.id, Entity.RemovalReason.DISCARDED)
         dummyPlayer = null
     }
 
@@ -137,7 +137,7 @@ object ModuleBlink : ClientModule("Blink", Category.PLAYER) {
     private val playerMoveHandler = handler<PlayerMovementTickEvent> {
         if (AutoResetOption.enabled && positions.count() > AutoResetOption.resetAfter) {
             when (AutoResetOption.action) {
-                ResetAction.RESET -> PacketQueueManager.cancel()
+                ResetAction.RESET -> PacketQueueManager.packetQueue.clear()
                 ResetAction.BLINK -> {
                     PacketQueueManager.flush(TransferOrigin.OUTGOING)
                     dummyPlayer?.copyPositionAndRotation(player)
@@ -153,6 +153,8 @@ object ModuleBlink : ClientModule("Blink", Category.PLAYER) {
 
     @Suppress("unused")
     private val worldChangeHandler = handler<WorldChangeEvent> {
+        // Do not replay packets captured in the previous world/session.
+        PacketQueueManager.packetQueue.clear()
         // The entity belongs to the previous world. Keeping the reference can
         // cause later cleanup to operate on the wrong world/entity id.
         dummyPlayer = null

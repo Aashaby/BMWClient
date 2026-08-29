@@ -176,6 +176,9 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
         }
     private var wasTowering: Boolean = false
 
+    /** Tracks the physical jump-key edge so holding jump does not continuously reset Scaffold state. */
+    private var jumpKeyWasPressed: Boolean = false
+
     // SafeWalk feature - uses the SafeWalk module as a base
     @Suppress("unused")
     private val safeWalkMode = choices("SafeWalk", 1, ModuleSafeWalk::safeWalkChoices)
@@ -296,6 +299,7 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
         placementY = player.blockPos.y - 1
         startY = player.blockPos.y
         jumps = 2
+        jumpKeyWasPressed = mc.options.jumpKey.isPressed
 
         ScaffoldMovementPlanner.reset()
         ScaffoldMovementPrediction.reset()
@@ -314,6 +318,7 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
         updateRenderCount()
         forceSneak = 0
         renderer.clearSilently()
+        jumpKeyWasPressed = false
     }
 
     @Suppress("unused")
@@ -471,10 +476,15 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
             wasTowering = false
         }
 
-        if (mc.options.jumpKey.isPressed) {
+        val jumpKeyPressed = mc.options.jumpKey.isPressed
+        // JumpKey-dependent Scaffold modes need the press edge, not every tick while
+        // the key is held. Rewriting startY/jumps continuously made SameY/Hypixel
+        // state unstable and could break transitions between normal Scaffold and Tower.
+        if (jumpKeyPressed && !jumpKeyWasPressed) {
             startY = player.blockPos.y
             jumps = 2
         }
+        jumpKeyWasPressed = jumpKeyPressed
 
         debugParameter("IsTowering") { isTowering }
         debugParameter("WasTowering") { wasTowering }

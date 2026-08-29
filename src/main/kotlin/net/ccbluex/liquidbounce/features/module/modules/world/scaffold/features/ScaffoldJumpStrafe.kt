@@ -50,6 +50,13 @@ object ScaffoldJumpStrafe : ToggleableConfigurable(ModuleScaffold, "StrafeOnJump
     private val afterJumpHandler = handler<PlayerAfterJumpEvent> {
         val dirInput = DirectionalInput(player.input)
 
+        // Never manufacture horizontal velocity when the player did not ask to
+        // move. This is especially important for Telly because a jump event can
+        // also be emitted while landing or while input is being released.
+        if (!enabled || !player.moving || !dirInput.isMoving || ModuleScaffold.blockCount <= 0) {
+            return@handler
+        }
+
         // Taken from GodBridge feature
         val direction = getMovementDirectionOfInput(RotationManager.currentRotation?.yaw ?: player.yaw, dirInput) + 180
 

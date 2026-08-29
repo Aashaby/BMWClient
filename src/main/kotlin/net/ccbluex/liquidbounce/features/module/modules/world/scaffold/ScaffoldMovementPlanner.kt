@@ -104,8 +104,19 @@ object ScaffoldMovementPlanner {
         // Just debug stuff
         debugLastPlacedBlocks(lastPlacedBlocksToConsider)
 
-        val avgPos = Vec3d.of(lastPlacedBlocksToConsider[0].add(lastPlacedBlocksToConsider[1])).multiply(0.5)
-        val dir = Vec3d.of(lastPlacedBlocksToConsider[1].subtract(lastPlacedBlocksToConsider[0])).normalize()
+        val first = lastPlacedBlocksToConsider[0]
+        val second = lastPlacedBlocksToConsider[1]
+        val delta = second.subtract(first)
+
+        // Duplicate placements can happen when a placement callback is retried.
+        // Normalizing a zero vector produces an invalid direction and can poison
+        // the movement line with NaN values. Fall back to the normal heuristic.
+        if (delta == BlockPos.ORIGIN) {
+            return null
+        }
+
+        val avgPos = Vec3d.of(first.add(second)).multiply(0.5)
+        val dir = Vec3d.of(delta).normalize()
 
         // Calculate the average direction of the last placed blocks
         return Line(avgPos, dir)
@@ -160,6 +171,7 @@ object ScaffoldMovementPlanner {
         // We have no reason to prefer a candidate so just pick any.
         val currPosition = candidates.firstOrNull()
 
+        // Do not keep a stale support block across a gap/world transition.
         lastPosition = currPosition
 
         return currPosition
@@ -187,7 +199,16 @@ object ScaffoldMovementPlanner {
      * Remembers the last placed blocks and removes old ones.
      */
     fun trackPlacedBlock(target: BlockPlacementTarget) {
-        lastPlacedBlocks.add(target.placedBlock)
+        val placedBlock = target.placedBlock
+
+        // Keep retries from creating two identical consecutive samples. Apart
+        // from avoiding a degenerate fitted line this also keeps the movement
+        // planner stable during high-speed placement bursts.
+        if (lastPlacedBlocks.lastOrNull() == placedBlock) {
+            return
+        }
+
+        lastPlacedBlocks.add(placedBlock)
 
         while (lastPlacedBlocks.size > MAX_LAST_PLACE_BLOCKS)
             lastPlacedBlocks.removeFirst()

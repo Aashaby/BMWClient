@@ -132,6 +132,9 @@ class BlockPlacer(
     val blocks = Long2BooleanLinkedOpenHashMap()
 
     private val inaccessible = LongOpenHashSet()
+
+    // Positions are re-evaluated every rotation tick. This keeps a transient reach or
+    // raytrace failure from permanently poisoning a fast Scaffold/Telly target.
     var ticksToWait = 0
     var ranAction = false
     private var sneakTimes = 0
@@ -208,9 +211,10 @@ class BlockPlacer(
                     supportPath = path
                 }
 
-                // one block is almost the best we can get, so why bother scanning the other blocks
+                // one block is the shortest possible support path. Stop scanning so the
+                // hot placement path does not waste time on inferior candidates.
                 if (size <= 1) {
-                    continue
+                    break
                 }
             }
         }
@@ -397,6 +401,15 @@ class BlockPlacer(
      * Removes all positions that are not in [positions] and adds all that are not in the queue.
      */
     fun update(positions: Set<BlockPos>) {
+        // A new target set starts a fresh placement session. In particular, a
+        // cooldown from a previous, now discarded target must not delay the first
+        // placement of the new set.
+        if (blocks.isEmpty() && positions.isNotEmpty()) {
+            ticksToWait = 0
+            ranAction = false
+            inaccessible.clear()
+        }
+
         val iterator = blocks.fastIterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
@@ -442,6 +455,12 @@ class BlockPlacer(
     fun clear() {
         blocks.fastIterator().forEach { targetRenderer.removeBlock(blockPosCache.set(it.longKey)) }
         blocks.clear()
+        // A caller may clear the queue without disabling the owning module. Do not
+        // carry reachability/cooldown state into the next placement session.
+        inaccessible.clear()
+        ticksToWait = 0
+        ranAction = false
+        sneakTimes = 0
     }
 
     /**

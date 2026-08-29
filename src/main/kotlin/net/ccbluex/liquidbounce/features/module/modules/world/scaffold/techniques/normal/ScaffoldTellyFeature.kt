@@ -74,6 +74,9 @@ object ScaffoldTellyFeature : ToggleableConfigurable(ScaffoldNormalTechnique, "T
     @Suppress("unused")
     private val gameHandler = handler<GameTickEvent> {
         if (!enabled || !player.moving || ModuleScaffold.blockCount <= 0) {
+            // A stop/start of movement must begin a fresh jump window. Without
+            // this reset a partially completed delay can carry into the next
+            // sprint and make Telly feel randomly slow.
             ticksUntilJump = 0
             return@handler
         }
@@ -93,7 +96,10 @@ object ScaffoldTellyFeature : ToggleableConfigurable(ScaffoldNormalTechnique, "T
         // starts only after the jump (airTicks >= 1), so it must not be reused here.
         when (resetMode) {
             Mode.REVERSE -> event.jump = true
-            Mode.RESET -> if (ticksUntilJump >= jumpTicks) event.jump = true
+            // A zero delay means jump on the first eligible input tick. Keep
+            // that path explicit so the default fast Telly profile does not
+            // depend on GameTick/MovementInput event ordering.
+            Mode.RESET -> if (jumpTicks <= 0 || ticksUntilJump >= jumpTicks) event.jump = true
         }
     }
 

@@ -31,8 +31,10 @@ import kotlin.math.atan2
 object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Prediction", true) {
 
     private val lastPlacementOffsets = ArrayDeque<Vec3d>()
+    private var lastPredictionDirection: Vec3d? = null
 
     private const val MAX_PLACEMENT_OFFSETS = 4
+    private const val DIRECTION_RESET_DOT = 0.5
 
     /** Distance to stay behind the detected edge while prediction history warms up. */
     private val bootstrapBackoff by float("BootstrapBackoff", 0.2f, 0.0f..0.4f)
@@ -45,6 +47,7 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
 
     fun reset() {
         lastPlacementOffsets.clear()
+        lastPredictionDirection = null
     }
 
     override fun onDisabled() {
@@ -63,6 +66,18 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
         if (direction.lengthSquared() < 1.0E-8) {
             return
         }
+
+        val normalizedDirection = direction.normalize()
+        lastPredictionDirection?.let { previous ->
+            // Placement offsets are expressed in the scaffold line's local
+            // coordinate system. Reusing them after a sharp turn makes a
+            // fast Telly/diagonal bridge predict the old path for several
+            // placements, delaying rotations and block acquisition.
+            if (previous.dotProduct(normalizedDirection) < DIRECTION_RESET_DOT) {
+                lastPlacementOffsets.clear()
+            }
+        }
+        lastPredictionDirection = normalizedDirection
 
         val lineDirAngle = atan2(direction.z, direction.x).toFloat()
 
@@ -115,6 +130,16 @@ object ScaffoldMovementPrediction : ToggleableConfigurable(ModuleScaffold, "Pred
         val direction = optimalLine.direction
         if (direction.lengthSquared() < 1.0E-8) {
             return bootstrapPos
+        }
+
+        val normalizedDirection = direction.normalize()
+        lastPredictionDirection?.let { previous ->
+            if (previous.dotProduct(normalizedDirection) < DIRECTION_RESET_DOT) {
+                // Direction changed before the placement callback updated the
+                // history. Prefer the deterministic bootstrap estimate over
+                // predicting along a stale bridge line.
+                return bootstrapPos
+            }
         }
 
         val lineDirAngle = atan2(direction.z, direction.x).toFloat()

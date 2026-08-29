@@ -76,7 +76,7 @@ object ScaffoldBreezilyTechnique : ScaffoldTechnique("Breezily") {
             return@handler
         }
 
-        if (player.blockPos.down().getState()!!.isAir) {
+        if (player.blockPos.down().getState()?.isAir ?: true) {
             lastAirTime = System.currentTimeMillis()
         } else if (System.currentTimeMillis() - lastAirTime > 500) {
             return@handler

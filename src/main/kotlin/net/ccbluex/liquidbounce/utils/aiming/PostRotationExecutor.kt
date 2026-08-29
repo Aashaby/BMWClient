@@ -60,6 +60,9 @@ object PostRotationExecutor : EventListener {
 
     @Suppress("unused")
     private val worldChangeHandler = handler<WorldChangeEvent> {
+        // A queued priority action may capture positions/entities from the old world.
+        priorityAction = null
+        priorityActionPostMove = false
         postMoveTasks.clear()
         normalTasks.clear()
     }

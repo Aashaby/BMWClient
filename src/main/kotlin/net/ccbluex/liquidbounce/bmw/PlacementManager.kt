@@ -217,9 +217,9 @@ object PlacementManager : EventListener, MinecraftShortcuts {
 
                 waitTicks(1)
 
-                val hitResult2 = raycast(RotationManager.serverRotation, player.blockInteractionRange)
-                if (hitResult2.type == HitResult.Type.BLOCK && hitResult2.side == Direction.UP) {
-                    interaction.interactBlock(player, hand, hitResult2)
+                val recycleHitResult = raycast(RotationManager.serverRotation, player.blockInteractionRange)
+                if (recycleHitResult.type == HitResult.Type.BLOCK && recycleHitResult.side == Direction.UP) {
+                    interaction.interactBlock(player, hand, recycleHitResult)
                     interaction.interactItem(
                         player,
                         hand,

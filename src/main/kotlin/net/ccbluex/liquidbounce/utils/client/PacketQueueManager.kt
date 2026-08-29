@@ -153,11 +153,10 @@ object PacketQueueManager : EventListener {
     }
 
     @Suppress("unused")
-    private val worldChangeHandler = handler<WorldChangeEvent> { event ->
-        // Clear packets on disconnect
-        if (event.world == null) {
-            packetQueue.clear()
-        }
+    private val worldChangeHandler = handler<WorldChangeEvent> {
+        // Queued packets belong to the previous network/world session. Keeping them
+        // across a dimension change can replay stale movement/interactions later.
+        packetQueue.clear()
     }
 
     @Suppress("unused")

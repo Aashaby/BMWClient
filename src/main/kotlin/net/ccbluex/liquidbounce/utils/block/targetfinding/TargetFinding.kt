@@ -149,7 +149,7 @@ class FaceHandlingOptions(
  */
 class PlayerLocationOnPlacement(
     val position: Vec3d,
-    val pose: EntityPose = player.pose
+    val pose: EntityPose = EntityPose.STANDING
 )
 
 /**
@@ -262,7 +262,10 @@ fun getTargetPlanForPositionAndDirection(
 class PointOnFace(val face: AlignedFace, val point: Vec3d)
 
 fun findBestBlockPlacementTarget(pos: BlockPos, options: BlockPlacementTargetFindingOptions): BlockPlacementTarget? {
-    val state = pos.getState()!!
+    // World transitions can temporarily make block-state lookup unavailable.
+    // Target finding runs on the hot Scaffold path, so fail this candidate instead of
+    // throwing and interrupting the entire placement pipeline.
+    val state = pos.getState() ?: return null
 
     // We cannot place blocks when there is already a block at that position
     if (isBlockSolid(state, pos)) {
@@ -276,7 +279,7 @@ fun findBestBlockPlacementTarget(pos: BlockPos, options: BlockPlacementTargetFin
 
     for (offset in offsetsToInvestigate) {
         val posToInvestigate = pos.add(offset)
-        val blockStateToInvestigate = posToInvestigate.getState()!!
+        val blockStateToInvestigate = posToInvestigate.getState() ?: continue
 
         // Already a block in that position?
         if (isBlockSolid(blockStateToInvestigate, posToInvestigate)) {
@@ -306,7 +309,8 @@ fun findBestBlockPlacementTarget(pos: BlockPos, options: BlockPlacementTargetFin
 
         // We found the optimal block to place the block/face to place at. Now we need to find a point on the face.
         // to rotate to
-        val pointOnFace = findTargetPointOnFace(currPos.getState()!!, currPos, targetPlan, options) ?: continue
+        val interactedState = currPos.getState() ?: continue
+        val pointOnFace = findTargetPointOnFace(interactedState, currPos, targetPlan, options) ?: continue
 
         val rotation = Rotation.lookingAt(
             point = pointOnFace.point.add(Vec3d.of(currPos)),

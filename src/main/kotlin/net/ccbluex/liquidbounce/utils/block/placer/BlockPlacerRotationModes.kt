@@ -75,7 +75,7 @@ class NormalRotationMode(configurable: ChoiceConfigurable<BlockPlacerRotationMod
                     max(placer.range, placer.wallRange).toDouble(),
                     RotationManager.currentRotation ?: return@RestrictedSingleUseAction false,
                     interactedBlockPos,
-                    interactedBlockPos.getState()!!
+                    interactedBlockPos.getState() ?: return@RestrictedSingleUseAction false
                 ) ?: return@RestrictedSingleUseAction false
 
                 raytraceResult.type == HitResult.Type.BLOCK && raytraceResult.blockPos == interactedBlockPos
