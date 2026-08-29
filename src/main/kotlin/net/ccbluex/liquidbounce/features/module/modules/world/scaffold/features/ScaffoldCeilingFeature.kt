@@ -23,5 +23,9 @@ import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleSca
 import net.ccbluex.liquidbounce.utils.block.getState
 
 object ScaffoldCeilingFeature : ToggleableConfigurable(ModuleScaffold, "Ceiling", false) {
-    fun canConstructCeiling() = !player.blockPos.down().getState()!!.isAir
+    fun canConstructCeiling(): Boolean {
+        // World/block-state lookup can be unavailable during a world transition.
+        // Treat that as "cannot construct" instead of crashing the scaffold tick.
+        return player.blockPos.down().getState()?.isAir == false
+    }
 }

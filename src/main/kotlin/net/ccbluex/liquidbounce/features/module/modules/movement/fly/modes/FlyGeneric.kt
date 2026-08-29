@@ -114,7 +114,12 @@ internal object FlyCreative : Choice("Creative") {
 
     private val forceFlight by boolean("ForceFlight", true)
 
+    private var previousAllowFlying = false
+    private var previousFlying = false
+
     override fun enable() {
+        previousAllowFlying = player.abilities.allowFlying
+        previousFlying = player.abilities.flying
         player.abilities.allowFlying = true
     }
 
@@ -152,8 +157,10 @@ internal object FlyCreative : Choice("Creative") {
     }
 
     override fun disable() {
-        player.abilities.allowFlying = false
-        player.abilities.flying = false
+        // Restore the state that existed before Fly. This avoids disabling
+        // legitimate creative/spectator flight when the module is turned off.
+        player.abilities.allowFlying = previousAllowFlying
+        player.abilities.flying = previousFlying
     }
 
 }

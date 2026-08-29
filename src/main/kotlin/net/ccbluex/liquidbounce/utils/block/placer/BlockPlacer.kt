@@ -286,7 +286,13 @@ class BlockPlacer(
 
     private fun isBlocked(posAsLong: Long): Boolean {
         val pos = blockPosCache.set(posAsLong)
-        if (!pos.getState()!!.isReplaceable) {
+        // World transitions can temporarily make state lookup unavailable. Treat an
+        // unknown state as blocked instead of crashing the rotation/update handler.
+        val state = pos.getState() ?: run {
+            inaccessible.add(posAsLong)
+            return true
+        }
+        if (!state.isReplaceable) {
             inaccessible.add(posAsLong)
             return true
         }
@@ -333,7 +339,8 @@ class BlockPlacer(
             return
         }
 
-        if (slot.itemStack.item !is BlockItem || pos.getState()!!.isReplaceable) {
+        val currentState = pos.getState() ?: return
+        if (slot.itemStack.item !is BlockItem || currentState.isReplaceable) {
             val onSuccess = {
                 removeFromQueue(pos)
                 placedRenderer.addBlock(pos)
@@ -352,11 +359,12 @@ class BlockPlacer(
 
     private fun raytraceTarget(placementTarget: BlockPlacementTarget, providedRotation: Rotation): BlockHitResult? {
         val pos = placementTarget.interactedBlockPos
+        val state = pos.getState() ?: return null
         val blockHitResult = raytraceBlock(
             range = max(range, wallRange).toDouble(),
             rotation = providedRotation,
             pos = pos,
-            state = pos.getState()!!
+            state = state
         )
 
         if (blockHitResult != null && placementTarget.doesCrosshairTargetFullFillRequirements(blockHitResult)) {
@@ -457,6 +465,10 @@ class BlockPlacer(
 
     private fun reset() {
         sneakTimes = 0
+        ticksToWait = 0
+        ranAction = false
+        // Keep renderer and queue lifecycle consistent across disable/world-change.
+        blocks.fastIterator().forEach { targetRenderer.removeBlock(blockPosCache.set(it.longKey)) }
         blocks.clear()
         inaccessible.clear()
     }

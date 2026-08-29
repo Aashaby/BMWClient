@@ -85,7 +85,9 @@ object ModuleBlink : ClientModule("Blink", Category.PLAYER) {
     private fun removeClone() {
         val clone = dummyPlayer ?: return
 
-        world.removeEntity(clone.id, Entity.RemovalReason.DISCARDED)
+        // Use the clone's own world. During a dimension/world transition `world`
+        // may already point somewhere else while the dummy still belongs to the old one.
+        clone.world.removeEntity(clone.id, Entity.RemovalReason.DISCARDED)
         dummyPlayer = null
     }
 
@@ -147,6 +149,13 @@ object ModuleBlink : ClientModule("Blink", Category.PLAYER) {
                 enabled = false
             }
         }
+    }
+
+    @Suppress("unused")
+    private val worldChangeHandler = handler<WorldChangeEvent> {
+        // The entity belongs to the previous world. Keeping the reference can
+        // cause later cleanup to operate on the wrong world/entity id.
+        dummyPlayer = null
     }
 
     @Suppress("unused")

@@ -185,17 +185,47 @@ object ModuleTargetStrafe : ClientModule("TargetStrafe", Category.MOVEMENT) {
                     direction = -direction
                     strafeVec = computeDirectionVec(strafeYaw, distance, speed, targetSelector.maxRange, direction)
                 } else {
-                    var currentRange = AdaptiveRange.rangeStep
-                    while (!Validation.validatePoint(pointCoords)) {
-                        strafeVec = computeDirectionVec(strafeYaw, distance, speed, currentRange, direction)
-                        pointCoords = player.pos.add(strafeVec)
-                        currentRange += AdaptiveRange.rangeStep
-                        if (currentRange > AdaptiveRange.maxRange) {
+                    // A zero RangeStep is a valid configuration value. The old loop never
+                    // advanced in that case and could spin forever while the point stayed unsafe.
+                    val rangeStep = AdaptiveRange.rangeStep
+                    if (rangeStep <= 0f) {
+                        direction = -direction
+                        strafeVec = computeDirectionVec(
+                            strafeYaw, distance, speed, targetSelector.maxRange, direction
+                        )
+                    } else {
+                        var currentRange = rangeStep.coerceAtMost(AdaptiveRange.maxRange)
+                        var attempts = 0
+                        val maxAttempts = ((AdaptiveRange.maxRange / rangeStep).toInt() + 2).coerceAtLeast(1)
+
+                        // Bound the search as well as the numeric range. Floating-point
+                        // rounding must never turn a movement validation failure into an
+                        // unbounded client-thread loop.
+                        while (!Validation.validatePoint(pointCoords) && attempts < maxAttempts) {
+                            strafeVec = computeDirectionVec(strafeYaw, distance, speed, currentRange, direction)
+                            pointCoords = player.pos.add(strafeVec)
+                            attempts++
+
+                            if (Validation.validatePoint(pointCoords)) {
+                                break
+                            }
+
+                            if (currentRange >= AdaptiveRange.maxRange) {
+                                direction = -direction
+                                strafeVec = computeDirectionVec(
+                                    strafeYaw, distance, speed, targetSelector.maxRange, direction
+                                )
+                                break
+                            }
+
+                            currentRange = (currentRange + rangeStep).coerceAtMost(AdaptiveRange.maxRange)
+                        }
+
+                        if (attempts >= maxAttempts && !Validation.validatePoint(pointCoords)) {
                             direction = -direction
                             strafeVec = computeDirectionVec(
                                 strafeYaw, distance, speed, targetSelector.maxRange, direction
                             )
-                            break
                         }
                     }
                 }

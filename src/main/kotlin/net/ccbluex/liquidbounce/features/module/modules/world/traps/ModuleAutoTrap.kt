@@ -60,10 +60,12 @@ object ModuleAutoTrap : ClientModule("AutoTrap", Category.WORLD, aliases = listO
 
     override fun onEnabled() {
         timeout = false
+        currentPlan = null
     }
 
     override fun onDisabled() {
         timeout = false
+        currentPlan = null
     }
 
     @Suppress("unused")
@@ -101,9 +103,15 @@ object ModuleAutoTrap : ClientModule("AutoTrap", Category.WORLD, aliases = listO
         }
 
         CombatManager.pauseCombatForAtLeast(1)
-        SilentHotbar.selectSlotSilently(this, plan.slot, 1)
+        // A cancelled SilentHotbar request means the server-side slot was not
+        // changed; do not place with a potentially wrong item.
+        if (!SilentHotbar.selectSlotSilently(this, plan.slot, 1)) {
+            return@tickHandler
+        }
+
         doPlacement(raycast, hand = plan.slot.useHand)
         timeout = true
+        currentPlan = null
         plan.onIntentFullfilled()
         waitTicks(delay)
         timeout = false

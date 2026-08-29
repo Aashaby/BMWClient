@@ -124,7 +124,7 @@ private open class BestRotationTracker(val comparator: Comparator<Rotation>, val
     var bestVisible: RotationWithVector? = null
         private set
 
-    fun considerRotation(rotation: RotationWithVector, visible: Boolean = true) {
+    open fun considerRotation(rotation: RotationWithVector, visible: Boolean = true) {
         if (visible || ignoreVisibility) {
             val isRotationBetter = getIsRotationBetter(base = this.bestVisible, rotation, true)
 
@@ -159,8 +159,20 @@ private class PrePlaningTracker(
 ) : BestRotationTracker(comparator, ignoreVisibility) {
 
     private val eyes = player.eyePos
-    private val bestVisibleIntersects = false
-    private val bestInvisibleIntersects = false
+    private var bestVisibleIntersects = false
+    private var bestInvisibleIntersects = false
+
+    override fun considerRotation(rotation: RotationWithVector, visible: Boolean) {
+        super.considerRotation(rotation, visible)
+        // Keep the intersection state synchronized with the actual selected rotation.
+        // The previous immutable flags were never updated, so futureTarget preference
+        // could not persist after the first candidate comparison.
+        if (visible || ignoreVisibility) {
+            bestVisible?.let { bestVisibleIntersects = futureTarget.isHitByLine(eyes, it.vec) }
+        } else {
+            bestInvisible?.let { bestInvisibleIntersects = futureTarget.isHitByLine(eyes, it.vec) }
+        }
+    }
 
     override fun getIsRotationBetter(base: RotationWithVector?, newRotation: RotationWithVector,
                                      visible: Boolean): Boolean {
@@ -320,7 +332,9 @@ fun raytraceBox(
 
         val validCauseVisible = visibilityPredicate.isVisible(eyesPos = eyes, targetSpot = preferredSpotOnBox)
 
-        if (validCauseBelowWallsRange || validCauseVisible && preferredSpotDistance < rangeSquared) {
+        // futureTarget must participate in every selection path. Returning early here
+        // bypassed PrePlaningTracker entirely and made futureTarget ineffective.
+        if (futureTarget == null && (validCauseBelowWallsRange || validCauseVisible && preferredSpotDistance < rangeSquared)) {
             return RotationWithVector(Rotation.lookingAt(point = preferredSpot, from = eyes), preferredSpot)
         }
     }

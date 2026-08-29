@@ -83,6 +83,14 @@ object ModuleBlockOutline : ClientModule("BlockOutline", Category.RENDER, aliase
 
         val side = target.side
         val box = blockState.getOutlineShape(this.world, blockPos, ShapeContext.of(mc.cameraEntity))
+        // Some blocks legitimately expose an empty outline shape. Avoid querying
+        // min/max/boundingBox on an empty VoxelShape, which can produce invalid
+        // bounds and break the renderer.
+        if (box.isEmpty) {
+            resetPositions()
+            return@handler
+        }
+
         val finalPosition = (if (sideOnly) flatBox(box, side) else box.boundingBox).offset(blockPos)
         if (currentPosition != finalPosition) {
             previousPosition = currentPosition

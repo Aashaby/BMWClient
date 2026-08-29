@@ -26,8 +26,7 @@ import net.ccbluex.liquidbounce.utils.entity.moving
 
 object ScaffoldHeadHitterFeature : ToggleableConfigurable(ModuleScaffold, "HeadHitter", false) {
     fun canHeadHit() =
-        !world.getBlockState(player.blockPos.add(0, 2, 0))
-            .getCollisionShape(world, player.blockPos.add(0, 2, 0)).isEmpty && player.isOnGround
+        !player.blockPos.add(0, 2, 0).collisionShape.isEmpty && player.isOnGround
 
     val repeatable = tickHandler {
         if (canHeadHit() && player.moving) {

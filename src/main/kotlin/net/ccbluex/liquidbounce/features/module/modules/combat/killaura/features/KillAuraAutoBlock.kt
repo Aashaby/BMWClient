@@ -189,6 +189,15 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
     private val gameTickHandler = handler<GameTickEvent> {
         flushTicks++
 
+        // OnlyWhenInDanger used to be checked only when startBlocking() happened.
+        // A target can stop threatening us while we are already blocking, leaving
+        // the use state stuck until another KillAura branch explicitly unblocked.
+        if (blockingStateEnforced && onlyWhenInDanger && !isInDanger()) {
+            stopBlocking()
+            blockingTicks = 0
+            return@handler
+        }
+
         if (blockingStateEnforced) {
             blockingTicks++
         }
@@ -288,14 +297,27 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
         }
     }
 
+
+    override fun onDisabled() {
+        // AutoBlock can be disabled independently of KillAura. Always clear both
+        // the visual and the enforced state so a stale key/use state cannot leak
+        // into the next enable cycle.
+        stopBlocking()
+        blockingStateEnforced = false
+        blockVisual = false
+        blockingTicks = 0
+        flushTicks = 0
+    }
+
     /**
      * Interact with the block or entity in front of the player.
      */
     private fun interactWithFront() {
-        // Raycast using the current rotation and find a block or entity that should be interacted with
-        val rotationToTheServer = RotationManager.serverRotation
+        // Interaction must follow the client-side aiming rotation. Server rotation may lag behind
+        // a pending rotation plan and can make AutoBlock interact with a stale target.
+        val interactionRotation = RotationManager.currentRotation ?: player.rotation
 
-        val entityHitResult = raytraceEntity(range.toDouble(), rotationToTheServer, filter = {
+        val entityHitResult = raytraceEntity(range.toDouble(), interactionRotation, filter = {
             when (raycast) {
                 TRACE_NONE -> false
                 TRACE_ONLYENEMY -> it.shouldBeAttacked()
@@ -315,7 +337,7 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
             return
         }
 
-        val hitResult = raycast(rotationToTheServer) ?: return
+        val hitResult = raycast(interactionRotation) ?: return
 
         if (hitResult.type != HitResult.Type.BLOCK) {
             return

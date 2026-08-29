@@ -140,10 +140,9 @@ object ModuleFreeCam : ClientModule("FreeCam", Category.RENDER, disableOnQuit = 
     override fun onDisabled() {
         PositionState.available = false
 
-        // Reset player rotation
-        val rotation = RotationManager.currentRotation ?: RotationManager.serverRotation
-        player.yaw = rotation.yaw
-        player.pitch = rotation.pitch
+        // Do not overwrite the player's local rotation here. RotationManager owns
+        // server-side rotations and restoring one of them on disable can make the
+        // player's view snap unexpectedly.
         super.onDisabled()
     }
 
