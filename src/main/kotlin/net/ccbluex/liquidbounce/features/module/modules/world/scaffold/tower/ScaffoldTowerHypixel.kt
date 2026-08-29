@@ -73,7 +73,7 @@ object ScaffoldTowerHypixel : ScaffoldTower("Hypixel") {
             }?.add(0, -1, 0) ?: blockPos
 
             // Check if block next to the player is solid
-            if (!blockOffset.getState()?.isSolidBlock(world, blockOffset) == true) {
+            if (blockOffset.getState()?.isSolidBlock(world, blockOffset) != true) {
                 return blockOffset
             }
         }

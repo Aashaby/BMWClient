@@ -87,7 +87,7 @@ object ModuleBlink : ClientModule("Blink", Category.PLAYER) {
 
         // Use the clone's own world. During a dimension/world transition `world`
         // may already point somewhere else while the dummy still belongs to the old one.
-        clone.world.removeEntity(clone.id, Entity.RemovalReason.DISCARDED)
+        world.removeEntity(clone.id, Entity.RemovalReason.DISCARDED)
         dummyPlayer = null
     }
 
