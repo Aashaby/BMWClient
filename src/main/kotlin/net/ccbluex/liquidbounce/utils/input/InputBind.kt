@@ -80,11 +80,18 @@ data class InputBind(
     /**
      * Determines if the specified key matches the bound key.
      *
+     * An unbound key never matches, because an unknown key code is also what a key that cannot be
+     * mapped reports.
+     *
      * @param keyCode The GLFW key code to check.
      * @param scanCode The scan code to check.
      * @return True if the key code or scan code matches the bound key, false otherwise.
      */
     fun matchesKey(keyCode: Int, scanCode: Int): Boolean {
+        if (isUnbound) {
+            return false
+        }
+
         return if (keyCode == InputUtil.UNKNOWN_KEY.code) {
             this.boundKey.category == InputUtil.Type.SCANCODE && this.boundKey.code == scanCode
         } else {

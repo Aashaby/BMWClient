@@ -31,10 +31,10 @@ import net.ccbluex.liquidbounce.config.types.nesting.DynamicConfigurable
 import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.liquidbounce.utils.client.mc
 import net.ccbluex.liquidbounce.utils.io.createZipArchive
-import net.ccbluex.liquidbounce.utils.io.extractZip
 import java.io.File
 import java.io.Reader
 import java.io.Writer
+import java.util.zip.ZipFile
 
 /**
  * A config system which uses configurables
@@ -132,11 +132,14 @@ object ConfigSystem {
         val zipFile = File(backupFolder, "$fileName.zip")
         check(zipFile.exists()) { "Backup file does not exist" }
 
-        // Store all configurables to make sure they are up to date,
-        // before we overwrite some of them through [extractZip]
-        storeAll()
-        extractZip(zipFile, rootFolder)
-        loadAll()
+        // The backup holds the json files of the configs, which load straight from it
+        ZipFile(zipFile).use { zip ->
+            for (configurable in configurables) {
+                val entry = zip.getEntry(configurable.jsonFile.name) ?: continue
+                deserializeConfigurable(configurable, zip.getInputStream(entry).bufferedReader())
+                store(configurable)
+            }
+        }
     }
 
     /**

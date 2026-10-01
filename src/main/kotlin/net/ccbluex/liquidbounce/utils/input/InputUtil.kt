@@ -29,10 +29,10 @@ import net.minecraft.util.ActionResult
  *
  * The input can be provided in the following formats:
  * - Full key name: "key.mouse.left", "key.keyboard.a", "key.keyboard.keypad.decimal"
- * - Abbreviated: "a" -> "key.keyboard.a", "lshift" -> "key.keyboard.left_shift"
+ * - Abbreviated: "a" -> "key.keyboard.a", "left_shift" -> "key.keyboard.left.shift"
  *
  * @param name The key name as a string.
- * @return The corresponding InputUtil.Key object.
+ * @return The corresponding InputUtil.Key object, or [InputUtil.UNKNOWN_KEY] if the name is unknown.
  */
 fun inputByName(name: String): InputUtil.Key {
     if (name.equals("NONE", true)) {
@@ -46,11 +46,18 @@ fun inputByName(name: String): InputUtil.Key {
                 formattedName.startsWith("key.keyboard.", ignoreCase = true) -> formattedName.lowercase()
 
             formattedName.startsWith("mouse.", ignoreCase = true) ||
-                formattedName.startsWith("keyboard.", ignoreCase = true) -> "key.$formattedName"
+                formattedName.startsWith("keyboard.", ignoreCase = true) -> "key.${formattedName.lowercase()}"
 
             else -> "key.keyboard.${formattedName.lowercase()}"
         }
-    return InputUtil.fromTranslationKey(translationKey)
+
+    return try {
+        InputUtil.fromTranslationKey(translationKey)
+    } catch (_: IllegalArgumentException) {
+        // Unnamed keys are looked up by their number, so a name that is neither known nor numeric
+        // leaves the lookup throwing instead of reporting an unknown key.
+        InputUtil.UNKNOWN_KEY
+    }
 }
 
 /**
@@ -77,12 +84,12 @@ fun reduceInputName(translationKey: String): String =
         .removePrefix("keyboard.")
 
 /**
- * Retrieves a set of reduced mouse input names available in InputUtil.
+ * Retrieves a set of reduced keyboard input names available in InputUtil.
  *
- * @return A set of simplified mouse input names.
+ * @return A set of simplified keyboard input names.
  */
 val availableKeyboardKeys: Set<String>
-    get() = InputUtil.Type.MOUSE.map.values
+    get() = InputUtil.Type.KEYSYM.map.values
         .map { key -> reduceInputName(key.translationKey) }
         .toSet()
 
