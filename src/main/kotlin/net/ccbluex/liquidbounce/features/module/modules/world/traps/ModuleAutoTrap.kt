@@ -66,6 +66,7 @@ object ModuleAutoTrap : ClientModule("AutoTrap", Category.WORLD, aliases = listO
     override fun onDisabled() {
         timeout = false
         currentPlan = null
+        SilentHotbar.resetSlot(this)
     }
 
     @Suppress("unused")

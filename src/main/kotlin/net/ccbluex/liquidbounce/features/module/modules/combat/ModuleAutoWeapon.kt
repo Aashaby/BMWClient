@@ -184,6 +184,10 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", Category.COMBAT) {
         }
     }
 
+    override fun onDisabled() {
+        SilentHotbar.resetSlot(this)
+    }
+
     private fun determineWeaponSlot(target: LivingEntity?, enforceShield: Boolean = false): HotbarItemSlot? {
         val itemCategorization = ItemCategorization(Slots.Hotbar)
         val requiresShield = autoShieldBreak && (enforceShield || target?.wouldBlockHit == true)

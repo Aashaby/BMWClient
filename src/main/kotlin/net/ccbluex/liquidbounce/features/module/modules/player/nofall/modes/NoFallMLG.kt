@@ -215,4 +215,8 @@ internal object NoFallMLG : NoFallMode("MLG") {
 
         return PlacementPlan(pos, bestPlacementPlan, item)
     }
+
+    override fun disable() {
+        SilentHotbar.resetSlot(this)
+    }
 }

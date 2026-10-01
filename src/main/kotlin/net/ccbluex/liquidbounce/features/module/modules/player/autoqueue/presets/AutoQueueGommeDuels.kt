@@ -119,6 +119,7 @@ object AutoQueueGommeDuels : Choice("GommeDuels") {
         super.disable()
 
         inMatch = false
+        SilentHotbar.resetSlot(this)
     }
 
     private suspend fun handleLobbySituation() {

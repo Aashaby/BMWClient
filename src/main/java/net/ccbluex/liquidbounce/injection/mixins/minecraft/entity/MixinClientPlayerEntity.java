@@ -355,6 +355,35 @@ public abstract class MixinClientPlayerEntity extends MixinPlayerEntity implemen
         return event.getSprint();
     }
 
+    @ModifyReturnValue(method = "shouldStopSprinting", at = @At("RETURN"))
+    private boolean hookForceStopSprinting(boolean shouldStop) {
+        return shouldStop || liquid_bounce$shouldForceStopSprinting();
+    }
+
+    /**
+     * ViaFabricPlus injects at HEAD of shouldStopSprinting with cancellable = true, which bypasses
+     * the RETURN instruction, so @ModifyReturnValue never fires for it. Intercepting the call site
+     * inside tickMovement works around that.
+     *
+     * @see <a href="https://github.com/ViaVersion/ViaFabricPlus/blob/618332d/src/main/java/com/viaversion/viafabricplus/injection/mixin/features/movement/sprinting_and_sneaking/MixinLocalPlayer.java#L262-L270">ViaFabricPlus changeStopSprintingConditions</a>
+     */
+    @ModifyExpressionValue(
+        method = "tickMovement",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/network/ClientPlayerEntity;shouldStopSprinting()Z"),
+        require = 0
+    )
+    private boolean hookVfpSprintStop(boolean shouldStop) {
+        return shouldStop || liquid_bounce$shouldForceStopSprinting();
+    }
+
+    @Unique
+    private boolean liquid_bounce$shouldForceStopSprinting() {
+        var event = new SprintEvent(new DirectionalInput(input), true, SprintEvent.Source.MOVEMENT_TICK);
+
+        EventManager.INSTANCE.callEvent(event);
+        return !event.getSprint();
+    }
+
     @ModifyExpressionValue(method = "canStartSprinting", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/network/ClientPlayerEntity;isBlind()Z"))
     private boolean hookSprintIgnoreBlindness(boolean original) {
         return !ModuleSprint.INSTANCE.getShouldIgnoreBlindness() && original;

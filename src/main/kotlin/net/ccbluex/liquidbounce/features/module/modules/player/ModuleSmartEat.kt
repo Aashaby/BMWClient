@@ -203,6 +203,10 @@ object ModuleSmartEat : ClientModule("SmartEat", Category.PLAYER) {
             tree(RenderSlot)
         }
 
+        override fun onDisabled() {
+            SilentHotbar.resetSlot(this)
+        }
+
     }
 
     private object AutoEat : ToggleableConfigurable(this, "AutoEat", true) {
@@ -240,6 +244,10 @@ object ModuleSmartEat : ClientModule("SmartEat", Category.PLAYER) {
 
             SilentHotbar.selectSlotSilently(AutoEat, currentBestFood, swapBackDelay)
             forceUseKey = true
+        }
+
+        override fun onDisabled() {
+            SilentHotbar.resetSlot(this)
         }
 
     }

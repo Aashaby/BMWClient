@@ -62,6 +62,12 @@ internal object FlyEnderpearl : Choice("Enderpearl") {
         canFly = false
     }
 
+    override fun disable() {
+        SilentHotbar.resetSlot(this)
+        threwPearl = false
+        canFly = false
+    }
+
     val repeatable = tickHandler {
         val slot = Slots.OffhandWithHotbar.findSlot(Items.ENDER_PEARL)
 

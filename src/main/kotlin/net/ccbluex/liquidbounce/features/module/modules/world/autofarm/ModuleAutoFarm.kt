@@ -311,6 +311,7 @@ object ModuleAutoFarm : ClientModule("AutoFarm", Category.WORLD) {
     override fun onDisabled() {
         ChunkScanner.unsubscribe(AutoFarmBlockTracker)
         currentTarget = null
+        SilentHotbar.resetSlot(this)
     }
 
 }

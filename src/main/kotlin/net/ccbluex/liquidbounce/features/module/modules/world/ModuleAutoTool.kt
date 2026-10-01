@@ -226,4 +226,8 @@ object ModuleAutoTool : ClientModule("AutoTool", Category.WORLD) {
         )
     }
 
+    override fun onDisabled() {
+        SilentHotbar.resetSlot(this)
+    }
+
 }

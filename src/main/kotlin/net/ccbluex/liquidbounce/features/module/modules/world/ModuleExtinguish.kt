@@ -197,4 +197,8 @@ object ModuleExtinguish: ClientModule("Extinguish", Category.WORLD) {
         return PlacementPlan(blockPos, bestPlacementPlan, bucket)
     }
 
+    override fun onDisabled() {
+        SilentHotbar.resetSlot(this)
+    }
+
 }
