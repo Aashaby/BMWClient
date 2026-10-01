@@ -23,6 +23,7 @@ export interface Module {
     hidden: boolean;
     aliases: string[];
     tag: string | null;
+    settingsCount?: number;
 }
 
 export interface GroupedModules {

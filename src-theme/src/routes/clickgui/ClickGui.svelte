@@ -47,6 +47,25 @@
         document.documentElement.style.setProperty('--accent-color', hexToRgbString(accentColor));
     });
 
+    /**
+     * The backend reports how many settings a module exposes, so the settings do not have to be
+     * requested one by one anymore. Falls back to the old behaviour if the field is missing.
+     */
+    async function loadSettingsCounts(modules: Module[]) {
+        if (modules.every((mod) => typeof mod.settingsCount === "number")) {
+            for (const mod of modules) {
+                moduleSettingsCount[mod.name] = mod.settingsCount ?? -1;
+            }
+            return;
+        }
+
+        const {getModuleSettings} = await import("../../integration/rest");
+        for (const mod of modules) {
+            const settings = await getModuleSettings(mod.name);
+            moduleSettingsCount[mod.name] = settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length;
+        }
+    }
+
     async function refreshModules() {
         const modules = await getModules();
         const grouped = groupByCategory(modules);
@@ -61,12 +80,7 @@
         }));
         allModules = Object.values(grouped).flat();
         clientInfo = await getClientInfo();
-        for (const cat of Object.keys(grouped)) {
-            for (const mod of grouped[cat]) {
-                const settings = await import("../../integration/rest").then(m => m.getModuleSettings(mod.name));
-                moduleSettingsCount[mod.name] = settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length;
-            }
-        }
+        await loadSettingsCounts(Object.values(grouped).flat());
     }
 
     onMount(async () => {
@@ -99,12 +113,7 @@
         allModules = Object.values(grouped).flat();
         clientInfo = await getClientInfo();
 
-        for (const cat of Object.keys(grouped)) {
-            for (const mod of grouped[cat]) {
-                const settings = await import("../../integration/rest").then(m => m.getModuleSettings(mod.name));
-                moduleSettingsCount[mod.name] = settings.value.filter(s => s.name !== "Bind" && s.name !== "Hidden").length;
-            }
-        }
+        await loadSettingsCounts(Object.values(grouped).flat());
 
         listen("moduleToggle", (e) => {
             for (const cat of Object.keys(modulesByCategory)) {

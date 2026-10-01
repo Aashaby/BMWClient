@@ -47,6 +47,9 @@ private fun ClientModule.toJsonObject() = JsonObject().apply {
     addProperty("tag", tag)
     addProperty("hidden", hidden)
     add("aliases", interopGson.toJsonTree(aliases))
+    // The web theme only checks whether a module has settings at all, but used to request the
+    // settings of every single module to find that out.
+    addProperty("settingsCount", inner.count { !it.notAnOption && it.name != "Bind" && it.name != "Hidden" })
 }
 
 // GET /api/v1/client/modules
