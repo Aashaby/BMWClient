@@ -30,6 +30,7 @@ import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBox
 import net.ccbluex.liquidbounce.utils.clicking.Clicker
 import net.ccbluex.liquidbounce.utils.combat.attack
 import net.ccbluex.liquidbounce.utils.entity.box
+import net.ccbluex.liquidbounce.utils.entity.isWithinWorldBorder
 import net.ccbluex.liquidbounce.utils.entity.prevPos
 import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
 import net.ccbluex.liquidbounce.utils.kotlin.Priority
@@ -130,7 +131,7 @@ object ModuleProjectilePuncher : ClientModule("ProjectilePuncher", Category.WORL
     }
 
     private fun shouldAttack(entity: Entity): Boolean {
-        if (entity !is FireballEntity && entity !is ShulkerBulletEntity) {
+        if (!entity.isWithinWorldBorder || (entity !is FireballEntity && entity !is ShulkerBulletEntity)) {
             return false
         }
 

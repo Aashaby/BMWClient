@@ -31,6 +31,7 @@ import net.ccbluex.liquidbounce.features.module.modules.render.ModuleFreeCam
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleFreeLook
 import net.ccbluex.liquidbounce.utils.block.SwingMode
 import net.ccbluex.liquidbounce.utils.client.*
+import net.ccbluex.liquidbounce.utils.entity.isWithinWorldBorder
 import net.ccbluex.liquidbounce.utils.entity.squaredBoxedDistanceTo
 import net.ccbluex.liquidbounce.utils.kotlin.toDouble
 import net.minecraft.client.option.Perspective
@@ -157,7 +158,7 @@ fun Entity.shouldBeShown(enemyConf: EnumSet<Targets> = ModuleTargets.visual) =
 
 @JvmOverloads
 fun Entity.shouldBeAttacked(enemyConf: EnumSet<Targets> = ModuleTargets.combat) =
-    enemyConf.shouldAttack(this)
+    enemyConf.shouldAttack(this) && isWithinWorldBorder
 
 /**
  * Find the best enemy in the current world in a specific range.

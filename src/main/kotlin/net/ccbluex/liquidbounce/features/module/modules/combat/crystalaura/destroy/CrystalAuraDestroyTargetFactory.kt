@@ -25,6 +25,7 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.crystalaura.destr
 import net.ccbluex.liquidbounce.features.module.modules.combat.crystalaura.destroy.SubmoduleCrystalDestroyer.wallsRange
 import net.ccbluex.liquidbounce.utils.aiming.utils.canSeeBox
 import net.ccbluex.liquidbounce.utils.combat.getEntitiesBoxInRange
+import net.ccbluex.liquidbounce.utils.entity.isWithinWorldBorder
 import net.ccbluex.liquidbounce.utils.math.sq
 import net.minecraft.entity.Entity
 import net.minecraft.entity.decoration.EndCrystalEntity
@@ -41,7 +42,7 @@ object CrystalAuraDestroyTargetFactory : MinecraftShortcuts {
     fun updateTarget() {
         currentTarget =
             world.getEntitiesBoxInRange(player.getCameraPosVec(1.0F), getMaxRange().toDouble()) {
-                it is EndCrystalEntity
+                it is EndCrystalEntity && it.isWithinWorldBorder
             }.mapNotNull {
                 if (cannotSeeEntity(it)) {
                     return@mapNotNull null
@@ -61,6 +62,11 @@ object CrystalAuraDestroyTargetFactory : MinecraftShortcuts {
     fun validateAndUpdateTarget(crystal: EndCrystalEntity) {
         val maxRange = getMaxRange().toDouble() + crystal.boundingBox.maxX - crystal.boundingBox.minX
         currentTarget = null
+
+        if (!crystal.isWithinWorldBorder) {
+            return
+        }
+
         if (player.eyePos.squaredDistanceTo(crystal.pos) > maxRange.sq()) {
             return
         }
