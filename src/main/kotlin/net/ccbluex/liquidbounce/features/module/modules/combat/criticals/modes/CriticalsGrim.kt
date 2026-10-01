@@ -35,9 +35,15 @@ object CriticalsGrim : Choice("Grim") {
     override val parent: ChoiceConfigurable<*>
         get() = ModuleCriticals.modes
 
+    /**
+     * How many player ticks are frozen after a hit, 0 disables the freeze (and the interact packet
+     * which covers it). The interact packet is sent right after the last frozen tick.
+     */
+    private val freezeTicks by int("FreezeTicks", 2, 0..10, "ticks")
+
     private var prevFallDistance = 0f
     private var isFalling = false
-    private var freezeCloseTick = 0
+    private var freezeTicksLeft = 0
     private var sprintRestoreTick = 0
     private var sprintShouldRestore = false
     private var hasTriggered = false
@@ -45,7 +51,7 @@ object CriticalsGrim : Choice("Grim") {
     override fun enable() {
         prevFallDistance = player.fallDistance
         isFalling = false
-        freezeCloseTick = 0
+        freezeTicksLeft = 0
         sprintRestoreTick = 0
         sprintShouldRestore = false
         hasTriggered = false
@@ -62,7 +68,7 @@ object CriticalsGrim : Choice("Grim") {
 
         sprintShouldRestore = false
         sprintRestoreTick = 0
-        freezeCloseTick = 0
+        freezeTicksLeft = 0
         hasTriggered = false
     }
 
@@ -81,9 +87,9 @@ object CriticalsGrim : Choice("Grim") {
 
         prevFallDistance = currentFallDistance
 
-        if (freezeCloseTick > 0) {
-            freezeCloseTick--
-            if (freezeCloseTick == 0) {
+        if (freezeTicksLeft > 0) {
+            freezeTicksLeft--
+            if (freezeTicksLeft == 0) {
                 ModuleFreeze.interact()
             }
         }
@@ -104,13 +110,13 @@ object CriticalsGrim : Choice("Grim") {
             sendSprintPacket(false)
             sprintShouldRestore = true
             sprintRestoreTick = 1
-            freezeCloseTick = 2
+            freezeTicksLeft = freezeTicks
         }
     }
 
     @Suppress("unused")
     private val playerTickEventHandler = handler<PlayerTickEvent> { event ->
-        if (freezeCloseTick > 0) {
+        if (freezeTicksLeft > 0) {
             event.cancelEvent()
         }
     }

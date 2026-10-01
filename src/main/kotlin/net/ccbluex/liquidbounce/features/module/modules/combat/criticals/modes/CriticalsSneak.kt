@@ -40,12 +40,13 @@ import net.minecraft.util.math.Direction
  *  1. You attack an entity, which is remembered as a click timestamp.
  *  2. If the jump key is pressed within [clickSpan] after that click, sneaking starts
  *     after [sneakDelay].
- *  3. While sneaking and not on ground the vertical velocity is set to [momentum]. This
- *     creates the tiny height difference vanilla needs for a critical hit: the server sees
- *     a fall distance greater than zero while you are off ground.
+ *  3. While actually crouching and not on ground the vertical velocity is set to [momentum]. This
+ *     creates the tiny height difference vanilla needs for a critical hit: the server sees a
+ *     fall distance greater than zero while you are off ground.
  *  4. Releasing the jump key stops the sequence again, which also allows sprinting to resume.
  *     While the trick is active sprinting is suppressed, because a critical hit requires the
- *     attacker not to sprint.
+ *     attacker not to sprint. With [sneakTimeout] the crouch is also released once the attacks
+ *     stopped.
  *
  * In short: hold your clicker and the jump key while approaching an enemy.
  */
@@ -65,6 +66,12 @@ object CriticalsSneak : Choice("Sneak") {
      * the matching stop-sprint packet on its own.
      */
     private val stopSprinting by boolean("StopSprinting", true)
+
+    /**
+     * Releases the crouch again when no attack happened for that long, 0 keeps crouching until the
+     * jump key is released.
+     */
+    private val sneakTimeout by float("SneakTimeout", 0f, 0f..2f, "s")
 
     /**
      * Timestamp of the last attack on an entity, 0 if there was none yet.
@@ -128,9 +135,16 @@ object CriticalsSneak : Choice("Sneak") {
             sneaking = true
         }
 
+        // Optional: release the crouch again when the attacks stopped, so the player does not keep
+        // crouching forever just because the jump key is still held.
+        if (sneaking && sneakTimeout > 0f && now - lastAttackAt > (sneakTimeout * 1000f).toLong()) {
+            sneakAt = 0L
+            sneaking = false
+        }
+
         // Crouched and off ground → force the small downwards momentum. Only in states in which a
         // critical hit can happen at all, so flying, vehicles, water, ladders, ... are not affected.
-        if (sneaking && !player.isOnGround && allowsCriticalHit(true)) {
+        if (sneaking && player.isSneaking && !player.isOnGround && allowsCriticalHit(true)) {
             val velocity = player.velocity
 
             player.velocity = when (momentumMode) {
