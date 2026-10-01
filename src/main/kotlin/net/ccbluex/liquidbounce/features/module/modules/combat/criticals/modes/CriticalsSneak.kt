@@ -29,6 +29,7 @@ import net.ccbluex.liquidbounce.event.events.SprintEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.allowsCriticalHit
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.modes
+import net.ccbluex.liquidbounce.utils.client.MovePacketType
 import net.minecraft.entity.LivingEntity
 import net.minecraft.util.math.Direction
 
@@ -40,9 +41,11 @@ import net.minecraft.util.math.Direction
  *  1. You attack an entity, which is remembered as a click timestamp.
  *  2. If the jump key is pressed within [clickSpan] after that click, sneaking starts
  *     after [sneakDelay].
- *  3. While actually crouching and not on ground the vertical velocity is set to [momentum]. This
- *     creates the tiny height difference vanilla needs for a critical hit: the server sees a
- *     fall distance greater than zero while you are off ground.
+ *  3. While actually crouching and not on ground a tiny height difference is created, so that the
+ *     server sees a fall distance greater than zero while you are off ground. By default this is
+ *     done by reporting a [packetMomentum] lower position right before the attack
+ *     ([MomentumSource.PACKET]), which a movement simulation cannot notice; [MomentumSource.CLIENT]
+ *     forces the vertical velocity to [momentum] instead, which is visible in game.
  *  4. Releasing the jump key stops the sequence again, which also allows sprinting to resume.
  *     While the trick is active sprinting is suppressed, because a critical hit requires the
  *     attacker not to sprint. With [sneakTimeout] the crouch is also released once the attacks
@@ -57,7 +60,19 @@ object CriticalsSneak : Choice("Sneak") {
 
     private val clickSpan by float("ClickSpan", 0.3f, 0.05f..1f, "s")
     private val sneakDelay by float("SneakDelay", 0.1f, 0f..1f, "s")
-    private val momentum by float("Momentum", -0.1f, -1f..0f)
+    /**
+     * Where the tiny height difference comes from.
+     *
+     * [MomentumSource.PACKET] only tells the server that the player is a millionth of a block lower
+     * right before the attack, while the client itself keeps moving vanilla. That is the same
+     * method as the "Grim" packet mode of this module and survives a movement simulation.
+     *
+     * [MomentumSource.CLIENT] forces the vertical velocity instead, which is visible in game and
+     * therefore only meant for servers without a movement simulation.
+     */
+    private val momentumSource by enumChoice("MomentumSource", MomentumSource.PACKET)
+
+    private val momentum by float("Momentum", -0.1f, -1f..0f, "b/t")
     private val momentumMode by enumChoice("MomentumMode", MomentumMode.SET)
 
     /**
@@ -88,6 +103,13 @@ object CriticalsSneak : Choice("Sneak") {
      */
     private var sneaking = false
 
+    /**
+     * One millionth of a block below the current position: enough for the server to see a fall
+     * distance greater than zero, but too small for a movement simulation to notice. The "Grim"
+     * packet mode of this module uses the same offset.
+     */
+    private val packetMomentum = 0.000001
+
     override fun enable() = reset()
 
     override fun disable() = reset()
@@ -110,6 +132,14 @@ object CriticalsSneak : Choice("Sneak") {
         // tick handler takes care of it as soon as the jump key is pressed.
         if (sneakAt == 0L && !sneaking && mc.options.jumpKey.isPressed) {
             sneakAt = lastAttackAt + (sneakDelay * 1000f).toLong()
+        }
+
+        // Give the server the tiny fall distance it wants right before the attack packet leaves,
+        // which happens right after this event was called.
+        if (momentumSource == MomentumSource.PACKET && sneaking && !player.isOnGround &&
+            allowsCriticalHit(true)
+        ) {
+            sendPacketMomentum()
         }
     }
 
@@ -144,7 +174,9 @@ object CriticalsSneak : Choice("Sneak") {
 
         // Crouched and off ground → force the small downwards momentum. Only in states in which a
         // critical hit can happen at all, so flying, vehicles, water, ladders, ... are not affected.
-        if (sneaking && player.isSneaking && !player.isOnGround && allowsCriticalHit(true)) {
+        if (momentumSource == MomentumSource.CLIENT && sneaking && player.isSneaking &&
+            !player.isOnGround && allowsCriticalHit(true)
+        ) {
             val velocity = player.velocity
 
             player.velocity = when (momentumMode) {
@@ -171,6 +203,23 @@ object CriticalsSneak : Choice("Sneak") {
         ) {
             event.sprint = false
         }
+    }
+
+    /**
+     * Sends a movement packet which is [packetMomentum] below the current position. The client
+     * position itself is not touched, so the next regular movement packet is back to vanilla.
+     */
+    private fun sendPacketMomentum() {
+        network.sendPacket(MovePacketType.FULL.generatePacket().apply {
+            this.y -= packetMomentum
+            this.onGround = false
+        })
+    }
+
+    enum class MomentumSource(override val choiceName: String) : NamedChoice {
+
+        PACKET("Packet"),
+        CLIENT("Client"),
     }
 
     enum class MomentumMode(override val choiceName: String) : NamedChoice {
