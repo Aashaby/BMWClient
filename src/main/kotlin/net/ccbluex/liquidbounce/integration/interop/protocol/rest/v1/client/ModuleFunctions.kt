@@ -30,10 +30,11 @@ import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.ModuleManager
 import net.ccbluex.liquidbounce.features.module.ModuleManager.modulesConfigurable
+import net.ccbluex.liquidbounce.integration.interop.onClientThreadAndWait
 import net.ccbluex.liquidbounce.utils.client.logger
-import net.ccbluex.liquidbounce.utils.client.mc
 import net.ccbluex.netty.http.model.RequestObject
 import net.ccbluex.netty.http.util.httpForbidden
+import net.ccbluex.netty.http.util.httpInternalServerError
 import net.ccbluex.netty.http.util.httpNoContent
 import net.ccbluex.netty.http.util.httpOk
 
@@ -50,12 +51,17 @@ private fun ClientModule.toJsonObject() = JsonObject().apply {
 
 // GET /api/v1/client/modules
 @Suppress("UNUSED_PARAMETER")
-fun getModules(requestObject: RequestObject): FullHttpResponse {
-    val mods = JsonArray()
-    for (module in ModuleManager) {
-        mods.add(module.toJsonObject())
+fun getModules(requestObject: RequestObject): FullHttpResponse = runCatching {
+    onClientThreadAndWait {
+        JsonArray().apply {
+            for (module in ModuleManager) {
+                add(module.toJsonObject())
+            }
+        }
     }
-    return httpOk(mods)
+}.map { httpOk(it) }.getOrElse {
+    logger.error("Failed to get modules", it)
+    httpInternalServerError("Failed to get modules due to ${it.message}")
 }
 
 // GET /api/v1/client/module/:name
@@ -63,7 +69,12 @@ fun getModule(requestObject: RequestObject): FullHttpResponse {
     val name = requestObject.params["name"] ?: return httpForbidden("Module not found")
     val module = ModuleManager[name] ?: return httpForbidden("Module not found")
 
-    return httpOk(module.toJsonObject())
+    return runCatching { onClientThreadAndWait { module.toJsonObject() } }
+        .map { httpOk(it) }
+        .getOrElse {
+            logger.error("Failed to get module $name", it)
+            httpInternalServerError("Failed to get module $name")
+        }
 }
 
 // PUT /api/v1/client/modules/toggle
@@ -85,25 +96,23 @@ fun putSettings(requestObject: RequestObject): FullHttpResponse {
 
 // POST /api/v1/client/modules/panic
 @Suppress("UNUSED_PARAMETER")
-fun postPanic(requestObject: RequestObject): FullHttpResponse {
-    mc.execute {
+fun postPanic(requestObject: RequestObject): FullHttpResponse = try {
+    onClientThreadAndWait {
         AutoConfig.withLoading {
-            runCatching {
-                for (module in ModuleManager) {
-                    if (module.category == Category.RENDER || module.category == Category.CLIENT) {
-                        continue
-                    }
-
+            for (module in ModuleManager) {
+                if (module.category != Category.RENDER && module.category != Category.CLIENT) {
                     module.enabled = false
                 }
-
-                ConfigSystem.store(modulesConfigurable)
-            }.onFailure {
-                logger.error("Failed to panic disable modules", it)
             }
+
+            ConfigSystem.store(modulesConfigurable)
         }
     }
-    return httpNoContent()
+
+    httpNoContent()
+} catch (throwable: Throwable) {
+    logger.error("Failed to panic disable modules", throwable)
+    httpInternalServerError("Failed to disable all modules")
 }
 
 data class ModuleRequest(val name: String) {
@@ -117,30 +126,45 @@ data class ModuleRequest(val name: String) {
             return httpForbidden("$name already ${if (supposedNew) "enabled" else "disabled"}")
         }
 
-        mc.execute {
-            runCatching {
+        return try {
+            onClientThreadAndWait {
                 module.enabled = supposedNew
 
                 ConfigSystem.store(modulesConfigurable)
-            }.onFailure {
-                logger.error("Failed to toggle module $name", it)
             }
+
+            httpNoContent()
+        } catch (throwable: Throwable) {
+            logger.error("Failed to toggle module $name", throwable)
+            httpInternalServerError("Failed to toggle module $name")
         }
-        return httpNoContent()
     }
 
     fun acceptGetSettingsRequest(): FullHttpResponse {
         val module = ModuleManager[name] ?: return httpForbidden("$name not found")
-        return httpOk(ConfigSystem.serializeConfigurable(module, gson = interopGson))
+
+        return runCatching {
+            onClientThreadAndWait { ConfigSystem.serializeConfigurable(module, gson = interopGson) }
+        }.map { httpOk(it) }.getOrElse {
+            logger.error("Failed to get settings for $name", it)
+            httpInternalServerError("Failed to get settings for $name")
+        }
     }
 
     fun acceptPutSettingsRequest(content: String): FullHttpResponse {
         val module = ModuleManager[name] ?: return httpForbidden("$name not found")
-        mc.execute {
-            ConfigSystem.deserializeConfigurable(module, content.reader())
-            ConfigSystem.store(modulesConfigurable)
+
+        return try {
+            onClientThreadAndWait {
+                ConfigSystem.deserializeConfigurable(module, content.reader())
+                ConfigSystem.store(modulesConfigurable)
+            }
+
+            httpNoContent()
+        } catch (throwable: Throwable) {
+            logger.error("Failed to update settings for $name", throwable)
+            httpInternalServerError("Failed to update settings for $name")
         }
-        return httpNoContent()
     }
 
 }

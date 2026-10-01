@@ -25,18 +25,30 @@ import io.netty.handler.codec.http.FullHttpResponse
 import net.ccbluex.liquidbounce.config.ConfigSystem
 import net.ccbluex.liquidbounce.config.gson.interopGson
 import net.ccbluex.liquidbounce.features.spoofer.SpooferManager
+import net.ccbluex.liquidbounce.integration.interop.onClientThreadAndWait
+import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.netty.http.model.RequestObject
+import net.ccbluex.netty.http.util.httpInternalServerError
 import net.ccbluex.netty.http.util.httpNoContent
 import net.ccbluex.netty.http.util.httpOk
 
 @Suppress("UNUSED_PARAMETER")
-fun getSpooferConfigurable(request: RequestObject): FullHttpResponse {
+fun getSpooferConfigurable(request: RequestObject): FullHttpResponse = runCatching {
     // Serialize MultiplayerConfigurable to JSON
-    return httpOk(ConfigSystem.serializeConfigurable(SpooferManager, gson = interopGson))
+    onClientThreadAndWait { ConfigSystem.serializeConfigurable(SpooferManager, gson = interopGson) }
+}.map { httpOk(it) }.getOrElse {
+    logger.error("Failed to get spoofer settings", it)
+    httpInternalServerError("Failed to get spoofer settings")
 }
 
-fun putSpooferConfigurable(request: RequestObject): FullHttpResponse {
-    ConfigSystem.deserializeConfigurable(SpooferManager, request.body.reader())
-    ConfigSystem.store(SpooferManager)
-    return httpNoContent()
+fun putSpooferConfigurable(request: RequestObject): FullHttpResponse = try {
+    onClientThreadAndWait {
+        ConfigSystem.deserializeConfigurable(SpooferManager, request.body.reader())
+        ConfigSystem.store(SpooferManager)
+    }
+
+    httpNoContent()
+} catch (throwable: Throwable) {
+    logger.error("Failed to update spoofer settings", throwable)
+    httpInternalServerError("Failed to update spoofer settings")
 }

@@ -22,9 +22,13 @@ package net.ccbluex.liquidbounce.integration.interop.protocol.rest.v1.client
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import net.ccbluex.liquidbounce.config.ConfigSystem
+import net.ccbluex.liquidbounce.integration.interop.onClientThreadAndWait
 import net.ccbluex.liquidbounce.integration.interop.persistant.PersistentLocalStorage
+import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.netty.http.model.RequestObject
 import net.ccbluex.netty.http.util.httpForbidden
+import net.ccbluex.netty.http.util.httpInternalServerError
 import net.ccbluex.netty.http.util.httpNoContent
 import net.ccbluex.netty.http.util.httpOk
 
@@ -42,7 +46,12 @@ import net.ccbluex.netty.http.util.httpOk
 // GET /api/v1/client/localStorage
 fun getLocalStorage(requestObject: RequestObject) = with(requestObject) {
     val key = queryParams["key"] ?: return@with httpForbidden("No key")
-    val value = PersistentLocalStorage[key] ?: return@with httpForbidden("No value for key $key")
+
+    val value = runCatching { onClientThreadAndWait { PersistentLocalStorage[key] } }
+        .getOrElse {
+            logger.error("Failed to read $key", it)
+            return@with httpInternalServerError("Failed to read $key")
+        } ?: return@with httpForbidden("No value for key $key")
 
     httpOk(JsonObject().apply {
         addProperty("value", value)
@@ -55,31 +64,54 @@ fun putLocalStorage(requestObject: RequestObject) = with(requestObject) {
     val key = body["key"]?.asString ?: return@with httpForbidden("No key")
     val value = body["value"]?.asString ?: return@with httpForbidden("No value")
 
-    PersistentLocalStorage[key] = value
-    httpNoContent()
+    runCatching {
+        onClientThreadAndWait {
+            PersistentLocalStorage[key] = value
+            // The storage is otherwise only written on a clean shutdown
+            ConfigSystem.store(PersistentLocalStorage)
+        }
+    }.map { httpNoContent() }.getOrElse {
+        logger.error("Failed to store $key", it)
+        httpInternalServerError("Failed to store $key")
+    }
 }
 
 // DELETE /api/v1/client/localStorage
 fun deleteLocalStorage(requestObject: RequestObject) = with(requestObject) {
     val key = queryParams["key"] ?: return@with httpForbidden("No key")
-    PersistentLocalStorage.remove(key)
-    httpNoContent()
+
+    runCatching {
+        onClientThreadAndWait {
+            PersistentLocalStorage.remove(key)
+            ConfigSystem.store(PersistentLocalStorage)
+        }
+    }.map { httpNoContent() }.getOrElse {
+        logger.error("Failed to remove $key", it)
+        httpInternalServerError("Failed to remove $key")
+    }
 }
 
 // GET /api/v1/client/localStorage/all
 fun getAllLocalStorage(requestObject: RequestObject) = with(requestObject) {
-    httpOk(JsonObject().apply {
-        val jsonArray = JsonArray()
+    runCatching {
+        onClientThreadAndWait {
+            JsonObject().apply {
+                val jsonArray = JsonArray()
 
-        PersistentLocalStorage.forEach { (key, value) ->
-            jsonArray.add(JsonObject().apply {
-                addProperty("key", key)
-                addProperty("value", value)
-            })
+                PersistentLocalStorage.forEach { (key, value) ->
+                    jsonArray.add(JsonObject().apply {
+                        addProperty("key", key)
+                        addProperty("value", value)
+                    })
+                }
+
+                add("items", jsonArray)
+            }
         }
-
-        add("items", jsonArray)
-    })
+    }.map { httpOk(it) }.getOrElse {
+        logger.error("Failed to read the persistent storage", it)
+        httpInternalServerError("Failed to read the persistent storage")
+    }
 }
 
 // PUT /api/v1/client/localStorage/all
@@ -89,10 +121,18 @@ fun putAllLocalStorage(requestObject: RequestObject) = with(requestObject) {
 
     val body = asJson<StoragePutRequest>()
 
-    PersistentLocalStorage.clear()
-    body.items.forEach { item ->
-        PersistentLocalStorage[item.key] = item.value
-    }
+    runCatching {
+        onClientThreadAndWait {
+            PersistentLocalStorage.clear()
+            body.items.forEach { item ->
+                PersistentLocalStorage[item.key] = item.value
+            }
 
-    httpNoContent()
+            // The storage is otherwise only written on a clean shutdown
+            ConfigSystem.store(PersistentLocalStorage)
+        }
+    }.map { httpNoContent() }.getOrElse {
+        logger.error("Failed to store the persistent storage", it)
+        httpInternalServerError("Failed to store the persistent storage")
+    }
 }

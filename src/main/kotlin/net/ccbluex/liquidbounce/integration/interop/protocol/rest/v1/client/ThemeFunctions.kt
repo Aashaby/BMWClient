@@ -24,8 +24,10 @@ import com.google.gson.JsonObject
 import io.netty.handler.codec.http.FullHttpResponse
 import net.ccbluex.liquidbounce.config.ConfigSystem
 import net.ccbluex.liquidbounce.config.gson.accessibleInteropGson
+import net.ccbluex.liquidbounce.integration.interop.onClientThreadAndWait
 import net.ccbluex.liquidbounce.integration.theme.ThemeManager
 import net.ccbluex.liquidbounce.render.FontManager
+import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.netty.http.model.RequestObject
 import net.ccbluex.netty.http.util.*
 
@@ -50,10 +52,16 @@ fun getToggleShaderInfo(requestObject: RequestObject): FullHttpResponse = httpOk
 
 // POST /api/v1/client/shader
 @Suppress("UNUSED_PARAMETER")
-fun postToggleShader(requestObject: RequestObject): FullHttpResponse {
-    ThemeManager.shaderEnabled = !ThemeManager.shaderEnabled
-    ConfigSystem.store(ThemeManager)
-    return httpNoContent()
+fun postToggleShader(requestObject: RequestObject): FullHttpResponse = try {
+    onClientThreadAndWait {
+        ThemeManager.shaderEnabled = !ThemeManager.shaderEnabled
+        ConfigSystem.store(ThemeManager)
+    }
+
+    httpNoContent()
+} catch (throwable: Throwable) {
+    logger.error("Failed to toggle the shader", throwable)
+    httpInternalServerError("Failed to toggle the shader")
 }
 
 

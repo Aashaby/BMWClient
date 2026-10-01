@@ -30,10 +30,12 @@ import net.ccbluex.liquidbounce.event.EventManager
 import net.ccbluex.liquidbounce.event.events.ProxyCheckResultEvent
 import net.ccbluex.liquidbounce.features.misc.proxy.Proxy
 import net.ccbluex.liquidbounce.features.misc.proxy.ProxyManager
+import net.ccbluex.liquidbounce.integration.interop.onClientThreadAndWait
 import net.ccbluex.liquidbounce.utils.client.logger
 import net.ccbluex.liquidbounce.utils.client.mc
 import net.ccbluex.netty.http.model.RequestObject
 import net.ccbluex.netty.http.util.httpForbidden
+import net.ccbluex.netty.http.util.httpInternalServerError
 import net.ccbluex.netty.http.util.httpNoContent
 import net.ccbluex.netty.http.util.httpOk
 import org.lwjgl.glfw.GLFW
@@ -207,9 +209,17 @@ fun putFavoriteProxy(requestObject: RequestObject): FullHttpResponse {
         return httpForbidden("Invalid id")
     }
 
-    ProxyManager.proxies[body.id].favorite = true
-    ConfigSystem.store(ProxyManager)
-    return httpNoContent()
+    return try {
+        onClientThreadAndWait {
+            ProxyManager.proxies[body.id].favorite = true
+            ConfigSystem.store(ProxyManager)
+        }
+
+        httpNoContent()
+    } catch (throwable: Throwable) {
+        logger.error("Failed to mark proxy ${body.id} as favorite", throwable)
+        httpInternalServerError("Failed to mark proxy as favorite")
+    }
 }
 
 // DELETE /api/v1/client/proxies/favorite
@@ -223,7 +233,15 @@ fun deleteFavoriteProxy(requestObject: RequestObject): FullHttpResponse {
         return httpForbidden("Invalid id")
     }
 
-    ProxyManager.proxies[body.id].favorite = false
-    ConfigSystem.store(ProxyManager)
-    return httpNoContent()
+    return try {
+        onClientThreadAndWait {
+            ProxyManager.proxies[body.id].favorite = false
+            ConfigSystem.store(ProxyManager)
+        }
+
+        httpNoContent()
+    } catch (throwable: Throwable) {
+        logger.error("Failed to unmark proxy ${body.id} as favorite", throwable)
+        httpInternalServerError("Failed to unmark proxy as favorite")
+    }
 }
