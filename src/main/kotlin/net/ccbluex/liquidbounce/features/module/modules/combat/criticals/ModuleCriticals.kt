@@ -59,7 +59,9 @@ object ModuleCriticals : ClientModule("Criticals", Category.COMBAT) {
             CriticalsNoGround,
             CriticalsJump,
             CriticalsBlink,
-            CriticalsTimer
+            CriticalsTimer,
+            CriticalsSneak,
+            CriticalsGrim
         )
     }.apply(::tagBy)
 

@@ -51,6 +51,21 @@ object CriticalsGrim : Choice("Grim") {
         hasTriggered = false
     }
 
+    /**
+     * Undo a sprint state that was not restored yet, otherwise the server would keep the player
+     * marked as not sprinting while the client sprints again.
+     */
+    override fun disable() {
+        if (sprintShouldRestore) {
+            restoreSprint()
+        }
+
+        sprintShouldRestore = false
+        sprintRestoreTick = 0
+        freezeCloseTick = 0
+        hasTriggered = false
+    }
+
     @Suppress("unused")
     private val tickHandler = tickHandler {
         val currentFallDistance = player.fallDistance
@@ -76,7 +91,7 @@ object CriticalsGrim : Choice("Grim") {
         if (sprintRestoreTick > 0) {
             sprintRestoreTick--
             if (sprintRestoreTick == 0 && sprintShouldRestore) {
-                sendSprintPacket(true)
+                restoreSprint()
                 sprintShouldRestore = false
             }
         }
@@ -97,6 +112,16 @@ object CriticalsGrim : Choice("Grim") {
     private val playerTickEventHandler = handler<PlayerTickEvent> { event ->
         if (freezeCloseTick > 0) {
             event.cancelEvent()
+        }
+    }
+
+    /**
+     * Tells the server to sprint again, but only while the client itself is sprinting. Otherwise
+     * the server would simulate a sprint state the client is not in.
+     */
+    private fun restoreSprint() {
+        if (mc.player?.isSprinting == true && mc.networkHandler != null) {
+            sendSprintPacket(true)
         }
     }
 
