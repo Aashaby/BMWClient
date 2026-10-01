@@ -22,6 +22,9 @@
 package net.ccbluex.liquidbounce.features.module.modules.player.autobuff
 
 import net.ccbluex.liquidbounce.config.types.nesting.ToggleableConfigurable
+import net.ccbluex.liquidbounce.event.events.KeybindIsPressedEvent
+import net.ccbluex.liquidbounce.event.handler
+import net.ccbluex.liquidbounce.event.tickUntil
 import net.ccbluex.liquidbounce.event.waitTicks
 import net.ccbluex.liquidbounce.features.module.modules.player.autobuff.ModuleAutoBuff.AutoSwap
 import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
@@ -35,6 +38,33 @@ import net.minecraft.item.ItemStack
 abstract class Buff(
     name: String,
 ) : ToggleableConfigurable(ModuleAutoBuff, name, true) {
+
+    private var forceUseKey = false
+
+    @Suppress("unused")
+    private val keyBindIsPressedHandler = handler<KeybindIsPressedEvent> { event ->
+        if (event.keyBinding == mc.options.useKey && forceUseKey) {
+            event.isPressed = true
+        }
+    }
+
+    /**
+     * Holds the use key until the buff is no longer required or the item is no longer a valid target,
+     * so the loop cannot hang forever when neither condition changes (e.g. after a potion is consumed).
+     */
+    protected suspend fun holdUse(slot: HotbarItemSlot) {
+        forceUseKey = true
+        try {
+            tickUntil { !passesRequirements || !isValidItem(slot.itemStack, true) }
+        } finally {
+            forceUseKey = false
+        }
+    }
+
+    override fun onDisabled() {
+        forceUseKey = false
+        super.onDisabled()
+    }
 
     internal open val passesRequirements: Boolean
         get() = enabled && !InventoryManager.isInventoryOpen
