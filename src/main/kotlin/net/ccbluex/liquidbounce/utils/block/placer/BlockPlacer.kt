@@ -278,7 +278,7 @@ class BlockPlacer(
                 sneakTimes = sneak - 1
             }
 
-            if (rotationMode.activeChoice(entry.booleanValue, pos.immutable(), placementTarget)) {
+            if (rotationMode.activeChoice(entry.booleanValue, pos.immutable, placementTarget)) {
                 return true
             }
 
