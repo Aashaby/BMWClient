@@ -36,6 +36,8 @@ import net.ccbluex.liquidbounce.utils.kotlin.toDouble
 import net.minecraft.client.option.Perspective
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.entity.Entity
+import net.minecraft.entity.ExperienceOrbEntity
+import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.attribute.EntityAttributes
 import net.minecraft.entity.mob.Angerable
@@ -196,12 +198,24 @@ inline fun ClientWorld.getEntitiesBoxInRange(
     return getEntitiesInCuboid(midPos, range) { predicate(it) && it.squaredBoxedDistanceTo(midPos) <= rangeSquared }
 }
 
+/**
+ * Mirrors the vanilla server side check for attacks the server refuses, which would disconnect us.
+ *
+ * @see net.minecraft.server.network.ServerPlayNetworkHandler.onPlayerInteractEntity
+ */
+private fun Entity.canBeAttackedWithVanillaPacket() =
+    this !is ItemEntity && this !is ExperienceOrbEntity && this !== player
+
 fun Entity.attack(swing: Boolean, keepSprint: Boolean = false) {
     attack(if (swing) SwingMode.DO_NOT_HIDE else SwingMode.HIDE_BOTH, keepSprint)
 }
 
 @Suppress("CognitiveComplexMethod", "NestedBlockDepth", "MagicNumber")
 fun Entity.attack(swing: SwingMode, keepSprint: Boolean = false) {
+    if (!canBeAttackedWithVanillaPacket()) {
+        return
+    }
+
     EventManager.callEvent(AttackEntityEvent(this))
 
     with(player) {

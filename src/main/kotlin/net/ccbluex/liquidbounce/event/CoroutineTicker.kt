@@ -32,11 +32,25 @@ typealias SuspendableEventHandler<T> = suspend CoroutineScope.(T) -> Unit
 
 object CoroutineTicker : EventListener {
 
+    // Tracks nested Minecraft.tick() calls. Only the outermost tick may advance the waiters,
+    // otherwise a re-entrant tick ticks every coroutine twice.
+    private var minecraftTickDepth = 0
+
     // Running callbacks
     private val runningList = ReferenceArrayList<BooleanSupplier>()
 
     // Next tick callbacks
     private val pendingList = ReferenceArrayList<BooleanSupplier>()
+
+    fun beginMinecraftTick() {
+        minecraftTickDepth++
+    }
+
+    fun endMinecraftTick() {
+        if (minecraftTickDepth > 0) {
+            minecraftTickDepth--
+        }
+    }
 
     /**
      * Registers a task to be ticked.
@@ -54,6 +68,11 @@ object CoroutineTicker : EventListener {
      */
     @Suppress("unused")
     private val taskTicker = handler<GameTickEvent>(priority = FIRST_PRIORITY) {
+        // A nested tick must not advance the waiters twice
+        if (minecraftTickDepth > 1) {
+            return@handler
+        }
+
         runningList.addAll(pendingList)
         pendingList.clear()
         runningList.removeIf(Predicate(BooleanSupplier::getAsBoolean))

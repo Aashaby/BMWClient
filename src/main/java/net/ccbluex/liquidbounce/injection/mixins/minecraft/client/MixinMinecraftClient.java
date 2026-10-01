@@ -23,6 +23,7 @@ import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.sugar.Local;
 import net.ccbluex.liquidbounce.LiquidBounce;
 import net.ccbluex.liquidbounce.common.GlobalFramebuffer;
+import net.ccbluex.liquidbounce.event.CoroutineTicker;
 import net.ccbluex.liquidbounce.event.EventManager;
 import net.ccbluex.liquidbounce.event.events.*;
 import net.ccbluex.liquidbounce.features.misc.HideAppearance;
@@ -296,7 +297,17 @@ public abstract class MixinMinecraftClient {
      */
     @Inject(method = "tick", at = @At("HEAD"))
     private void hookTickEvent(CallbackInfo callbackInfo) {
+        CoroutineTicker.INSTANCE.beginMinecraftTick();
         EventManager.INSTANCE.callEvent(GameTickEvent.INSTANCE);
+    }
+
+    /**
+     * Closes the tick for the coroutine ticker, which only lets the outermost tick advance waiters.
+     * A re-entrant tick would otherwise tick every waiting coroutine twice, which crashed the game.
+     */
+    @Inject(method = "tick", at = @At("RETURN"))
+    private void hookTickEndEvent(CallbackInfo callbackInfo) {
+        CoroutineTicker.INSTANCE.endMinecraftTick();
     }
 
     /**
