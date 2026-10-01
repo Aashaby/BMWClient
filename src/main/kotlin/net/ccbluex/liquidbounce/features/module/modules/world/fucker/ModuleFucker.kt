@@ -40,6 +40,7 @@ import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBlock
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBlockRotation
 import net.ccbluex.liquidbounce.utils.block.*
 import net.ccbluex.liquidbounce.utils.block.bed.isSelfBedChoices
+import net.ccbluex.liquidbounce.utils.combat.CombatManager
 import net.ccbluex.liquidbounce.utils.inventory.Slots
 import net.ccbluex.liquidbounce.utils.inventory.findBlocksEndingWith
 import net.ccbluex.liquidbounce.utils.kotlin.Priority
@@ -101,6 +102,7 @@ object ModuleFucker : ClientModule("Fucker", Category.WORLD, aliases = listOf("B
 
     private val ignoreOpenInventory by boolean("IgnoreOpenInventory", true)
     private val ignoreUsingItem by boolean("IgnoreUsingItem", true)
+    private val notDuringCombat by boolean("NotDuringCombat", false)
     private val prioritizeOverKillAura by boolean("PrioritizeOverKillAura", false)
 
     private val isSelfBedMode = choices("SelfBed", 0, ::isSelfBedChoices)
@@ -140,7 +142,7 @@ object ModuleFucker : ClientModule("Fucker", Category.WORLD, aliases = listOf("B
             return@handler
         }
 
-        if (!ignoreUsingItem && player.isUsingItem) {
+        if (!ignoreUsingItem && player.isUsingItem || notDuringCombat && CombatManager.isInCombat) {
             return@handler
         }
 

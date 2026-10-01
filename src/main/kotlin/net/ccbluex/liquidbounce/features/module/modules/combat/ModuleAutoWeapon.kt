@@ -36,13 +36,16 @@ import net.ccbluex.liquidbounce.utils.entity.hasCooldown
 import net.ccbluex.liquidbounce.utils.entity.wouldBlockHit
 import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
 import net.ccbluex.liquidbounce.utils.inventory.Slots
+import net.ccbluex.liquidbounce.utils.item.attackDamage
 import net.ccbluex.liquidbounce.utils.item.attackSpeed
+import net.ccbluex.liquidbounce.utils.item.getEnchantment
 import net.ccbluex.liquidbounce.utils.item.isAxe
 import net.ccbluex.liquidbounce.utils.item.isConsumable
 import net.ccbluex.liquidbounce.utils.item.isSword
 import net.ccbluex.liquidbounce.utils.item.sharpnessLevel
 import net.minecraft.entity.Entity
 import net.minecraft.entity.LivingEntity
+import net.minecraft.enchantment.Enchantments
 import net.minecraft.item.MaceItem
 import net.minecraft.util.Hand
 import java.util.*
@@ -59,6 +62,15 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", Category.COMBAT) {
      * due to the attack speed.
      */
     private val preferredWeapon by enumChoice("Preferred", WeaponType.ANY)
+
+    private val priorityChoice by enumChoice("Priority", Priorities.DEFAULT)
+
+    private enum class Priorities(override val choiceName: String) : NamedChoice {
+        DEFAULT("Default"),
+        KNOCKBACK("Knockback"),
+        DAMAGE("Damage"),
+        ATTACK_SPEED("AttackSpeed")
+    }
 
     private val autoShieldBreak by boolean("AutoShieldBreak", true)
     private val autoMace by boolean("AutoMace", true)
@@ -193,7 +205,7 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", Category.COMBAT) {
         val requiresShield = autoShieldBreak && (enforceShield || target?.wouldBlockHit == true)
         val requiresMace = autoMace && canMaceSmash
 
-        val bestSlot = Slots.Hotbar
+        val candidates = Slots.Hotbar
             .flatMap { slot -> itemCategorization.getItemFacets(slot).filterIsInstance<WeaponItemFacet>() }
             .filter { itemFacet ->
                 when {
@@ -205,7 +217,14 @@ object ModuleAutoWeapon : ClientModule("AutoWeapon", Category.COMBAT) {
                     else -> preferredWeapon.filter(itemFacet)
                 }
             }
-            .maxOrNull()
+
+        // Pick the weapon that wins by the configured criterion, all of them are equally usable otherwise
+        val bestSlot = when (priorityChoice) {
+            Priorities.DEFAULT -> candidates.maxOrNull()
+            Priorities.DAMAGE -> candidates.maxByOrNull { it.itemStack.attackDamage }
+            Priorities.ATTACK_SPEED -> candidates.maxByOrNull { it.itemStack.attackSpeed }
+            Priorities.KNOCKBACK -> candidates.maxByOrNull { it.itemStack.getEnchantment(Enchantments.KNOCKBACK) }
+        }
 
         return bestSlot?.itemSlot as HotbarItemSlot?
     }

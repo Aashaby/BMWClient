@@ -104,7 +104,7 @@ object ModuleAutoTool : ClientModule("AutoTool", Category.WORLD) {
             @Suppress("unused")
             private val tickHandler = handler<GameTickEvent> {
                 waitingTicks++
-                if (waitingTicks <= swapPreviousDelay) return@handler
+                if (waitingTicks <= swapBackDelay) return@handler
 
                 waitingTicks = 0
                 val swapAction = swapAction ?: return@handler
@@ -155,7 +155,13 @@ object ModuleAutoTool : ClientModule("AutoTool", Category.WORLD) {
         override fun getToolSlot(blockState: BlockState) = Slots.Hotbar[slot]
     }
 
-    private val swapPreviousDelay by int("SwapPreviousDelay", 20, 1..100, "ticks")
+    private val swapBackDelay by int("SwapBackDelay", 20, 1..100, "ticks", aliases = listOf("SwapPreviousDelay"))
+
+    private val switchDelay by int("SwitchDelay", 0, 0..100, "ticks")
+
+    // Tracks the current block breaking session so the switch is delayed only once per block
+    private var breakingPos: BlockPos? = null
+    private var breakingStartedTick = 0
 
     private val requireSneaking by boolean("RequireSneaking", false)
 
@@ -196,9 +202,21 @@ object ModuleAutoTool : ClientModule("AutoTool", Category.WORLD) {
             return
         }
 
+        if (switchDelay > 0) {
+            // A new block starts a new breaking session and re-arms the delay
+            if (breakingPos != pos) {
+                breakingPos = pos
+                breakingStartedTick = player.age
+            }
+            if (player.age - breakingStartedTick < switchDelay) {
+                return
+            }
+        }
+
         val blockState = pos.getState()!!
         val slot = toolSelector.activeChoice.getTool(blockState) ?: return
-        SilentHotbar.selectSlotSilently(this, slot, swapPreviousDelay)
+        SilentHotbar.selectSlotSilently(this, slot, swapBackDelay)
+        breakingPos = null
     }
 
     fun <T : ItemSlot> SlotGroup<T>.findBestToolToMineBlock(
