@@ -31,7 +31,6 @@ import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.tickHandler
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.GrimVelocityMode
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
-import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.features.module.modules.player.nofall.modes.NoFallGrim
 import net.ccbluex.liquidbounce.render.drawBox
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
@@ -45,6 +44,7 @@ import net.minecraft.client.gui.screen.ingame.GenericContainerScreen
 import net.minecraft.entity.Entity
 import net.minecraft.entity.TrackedPosition
 import net.minecraft.network.packet.Packet
+import net.minecraft.network.packet.s2c.common.CommonPingS2CPacket
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityDamageS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityPositionS2CPacket
@@ -93,7 +93,6 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
 
     private var delaying = false
     private var damage = false
-    private var damageUntil = 0L
     private var delayTicks = 0
     private var jump = false
     private var target: Entity? = null
@@ -106,7 +105,6 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
     override fun disable() {
         delaying = false
         damage = false
-        damageUntil = 0L
         delayTicks = 0
         jump = false
         target = null
@@ -138,66 +136,50 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
                 }
 
                 is EntityS2CPacket -> {
-                    if (packet.getEntity(world) == target) {
-                        event.cancelEvent()
-                        packets.add(packet)
-                        if (targetPos != null) {
-                            targetPos!!.pos = targetPos!!.withDelta(
-                                packet.deltaX.toLong(),
-                                packet.deltaY.toLong(),
-                                packet.deltaZ.toLong()
-                            )
-                        }
+                    event.cancelEvent()
+                    packets.add(packet)
+                    if (targetPos != null && packet.getEntity(world) == target) {
+                        targetPos!!.pos = targetPos!!.withDelta(
+                            packet.deltaX.toLong(),
+                            packet.deltaY.toLong(),
+                            packet.deltaZ.toLong()
+                        )
                     }
                 }
 
                 is EntityPositionS2CPacket -> {
-                    if (packet.entityId == target?.id) {
-                        event.cancelEvent()
-                        packets.add(packet)
-                        if (targetPos != null) {
-                            targetPos!!.pos = packet.change.position.copy()
-                        }
+                    event.cancelEvent()
+                    packets.add(packet)
+                    if (targetPos != null && packet.entityId == target?.id) {
+                        targetPos!!.pos = packet.change.position.copy()
                     }
                 }
 
                 is EntityPositionSyncS2CPacket -> {
-                    if (packet.id == target?.id) {
-                        event.cancelEvent()
-                        packets.add(packet)
-                        if (targetPos != null) {
-                            targetPos!!.pos = packet.values.position()
-                        }
+                    event.cancelEvent()
+                    packets.add(packet)
+                    if (targetPos != null && packet.id == target?.id) {
+                        targetPos!!.pos = packet.values.position()
                     }
                 }
 
-                is EntityVelocityUpdateS2CPacket -> {
-                    if (packet.entityId == player.id) {
-                        event.cancelEvent()
-                        packets.add(packet)
-                    }
+                is EntityVelocityUpdateS2CPacket,
+                is CommonPingS2CPacket -> {
+                    event.cancelEvent()
+                    packets.add(packet)
                 }
             }
 
             return@handler
         }
 
-        val now = System.currentTimeMillis()
-        if (damage && now > damageUntil) {
-            damage = false
-            damageUntil = 0L
-        }
-
         if (pause) return@handler
 
         if (packet is EntityDamageS2CPacket && packet.entityId == player.id) {
             damage = true
-            damageUntil = now + 750L
         }
 
         if (damage && packet is EntityVelocityUpdateS2CPacket && packet.entityId == player.id) {
-            damage = false
-            damageUntil = 0L
             if (!requireKillAura || (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null)) {
                 if (mode.activeChoice != DelayInAir || !player.isOnGround) {
                     delayTicks = when (mode.activeChoice) {
@@ -253,7 +235,6 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
                 && mc.currentScreen !is GenericContainerScreen
                 && player.isOnGround
                 && !(NoFallGrim.running && NoFallGrim.jumping)
-                && !ModuleScaffold.running
             ) {
                 event.jump = true
             }

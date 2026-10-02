@@ -34,7 +34,6 @@ import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.render.renderEnvironmentForWorld
 import net.ccbluex.liquidbounce.render.withPositionRelativeToCamera
 import net.ccbluex.liquidbounce.utils.client.Chronometer
-import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.ccbluex.liquidbounce.utils.client.PacketSnapshot
 import net.ccbluex.liquidbounce.utils.combat.findEnemy
 import net.ccbluex.liquidbounce.utils.combat.shouldBeAttacked
@@ -109,6 +108,10 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
             return@handler
         }
 
+        if (arePacketQueuesEmpty && !shouldCancelPackets()) {
+            return@handler
+        }
+
         val packet = event.packet
 
         when (packet) {
@@ -118,22 +121,9 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
             }
 
             // Flush on teleport or disconnect
-            is PlayerPositionLookS2CPacket,
-            is DisconnectS2CPacket,
-            is PlayerRespawnS2CPacket,
-            is GameJoinS2CPacket -> {
-                // Never keep packets from the old player/world state behind a transition.
-                clear(handlePackets = false, clearOnly = true)
+            is PlayerPositionLookS2CPacket, is DisconnectS2CPacket -> {
+                clear(true)
                 return@handler
-            }
-
-            is EntitiesDestroyS2CPacket -> {
-                if (target?.id != null && target!!.id in packet.entityIds) {
-                    // The target no longer exists; replaying its old movement after destruction
-                    // can resurrect stale interpolation state locally. Drop that target history.
-                    clear(handlePackets = false, clearOnly = true)
-                    return@handler
-                }
             }
 
             // Ignore own hurt sounds
@@ -151,15 +141,6 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
                 }
             }
         }
-
-        // Do not stack a second incoming lag buffer behind another owner.
-        // A live global queue means another module already owns incoming packet timing.
-        if (PacketQueueManager.isLagging || ModuleGrimVelocity.shouldStopBacktrack || !shouldCancelPackets()) {
-            return@handler
-        }
-
-        // Backtrack only needs the tracked target's movement. Delaying world, inventory,
-        // sound, effect, and unrelated entity packets creates unnecessary client/server drift.
 
         // Update box position with these packets
         val entityPacket = packet is EntityS2CPacket && packet.getEntity(world) == target
@@ -186,17 +167,6 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
                 // And stop right here. No need to cancel further packets.
                 return@handler
             }
-        }
-
-        val shouldDelay = when (packet) {
-            is EntityS2CPacket -> packet.getEntity(world) == target
-            is EntityPositionS2CPacket -> packet.entityId == target?.id
-            is EntityPositionSyncS2CPacket -> packet.id == target?.id
-            else -> false
-        }
-
-        if (!shouldDelay) {
-            return@handler
         }
 
         event.cancelEvent()
@@ -333,6 +303,8 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
         // Reset on enemy change
         if (enemy != target) {
             clear(resetChronometer = false)
+            trackingBufferChronometer.reset()
+            currentDelay = delay.random()
 
             // Instantly set new position, so it does not look like the box was created with delay
             position = TrackedPosition().apply { this.pos = enemy.trackedPosition.pos }
@@ -362,9 +334,8 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
     fun clear(handlePackets: Boolean = true, clearOnly: Boolean = false, resetChronometer: Boolean = true) {
         if (handlePackets && !clearOnly) {
             processPackets(true)
-        } else if (clearOnly || !handlePackets) {
+        } else if (clearOnly) {
             delayedPacketQueue.clear()
-            packetProcessQueue.clear()
         }
 
         if (target != null && resetChronometer) {

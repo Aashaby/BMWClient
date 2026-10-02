@@ -30,9 +30,6 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAutoClicker
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.allowsCriticalHit
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
-import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
-import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
-import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.ccbluex.liquidbounce.features.module.modules.misc.debugrecorder.modes.GenericDebugRecorder
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
@@ -82,13 +79,6 @@ object CriticalsJump : Choice("Jump") {
             return@handler
         }
 
-        // Do not compete with movement/lag owners. A jump request created here can otherwise
-        // land in the same tick as Scaffold, Velocity, or a queued movement correction.
-        if (ModuleScaffold.running ||
-            PacketQueueManager.isLagging || ModuleGrimVelocity.shouldStopBacktrack) {
-            return@handler
-        }
-
         if (optimizeForCooldown && shouldWaitForJump()) {
             return@handler
         }
@@ -118,49 +108,30 @@ object CriticalsJump : Choice("Jump") {
     }
 
     /**
-     * Decide whether KillAura should wait for the falling portion of a jump for a critical hit.
-     * The calculation is deliberately conservative around movement queue ownership.
+     * Sometimes when the player is almost at the highest point of his jump, the KillAura
+     * will try to attack the enemy anyway. To maximise damage, this function is used to determine
+     * whether it is worth to wait for the fall.
      */
-    @Suppress("CognitiveComplexMethod", "LongMethod")
     fun shouldWaitForCrit(target: Entity, ignoreState: Boolean = false): Boolean {
         if (!isActive() && !ignoreState) {
             return false
         }
 
-        if (player.isGliding || ModuleScaffold.running ||
-            PacketQueueManager.isLagging || ModuleGrimVelocity.shouldStopBacktrack) {
+        if (player.isGliding) {
             return false
         }
 
-        if (!allowsCriticalHit(ignoreOnGround = true)) {
-            return false
-        }
-
-        val onGround = player.isOnGround
-        val jumpRequested = mc.options.jumpKey.isPressed || adjustNextJump
-
-        // Do not make a normal ground attack wait for a crit unless a jump is actually being
-        // requested. CriticalsJump itself creates that request from MovementInputEvent.
-        if (onGround && !jumpRequested) {
+        if (!allowsCriticalHit() || player.velocity.y < -0.08) {
             return false
         }
 
         val nextPossibleCrit = calculateTicksUntilNextCrit()
-
-        if (!onGround && player.velocity.y <= 0.0) {
-            if (player.fallDistance > 0.0 && player.getAttackCooldownProgress(0.5f) > 0.9f) {
-                return false
-            }
-
-            val collision = FallingPlayer.fromPlayer(player)
-                .findCollision((nextPossibleCrit + 1.0f).toInt())
-            return collision == null || collision.tick >= nextPossibleCrit.toInt()
-        }
-
-        val initialMotionY = if (onGround) height.toDouble() else player.velocity.y
         val gravity = 0.08
-        val ticksTillFall = (initialMotionY / gravity).toFloat()
+        val ticksTillFall = (player.velocity.y / gravity).toFloat()
         val ticksTillCrit = nextPossibleCrit.coerceAtLeast(ticksTillFall)
+        val hitProbability = 0.75f
+        val damageOnCrit = 0.5f * hitProbability
+        val damageLostWaiting = getCooldownDamageFactor(player, ticksTillCrit)
 
         val (simulatedPlayerPos, simulatedTargetPos) = if (target is PlayerEntity) {
             predictPlayerPos(target, ticksTillCrit.toInt())
@@ -172,6 +143,8 @@ object CriticalsJump : Choice("Jump") {
 
         GenericDebugRecorder.recordDebugInfo(ModuleCriticals, "critEstimation", JsonObject().apply {
             addProperty("ticksTillCrit", ticksTillCrit)
+            addProperty("damageOnCrit", damageOnCrit)
+            addProperty("damageLostWaiting", damageLostWaiting)
             add("player", GenericDebugRecorder.debugObject(player))
             add("target", GenericDebugRecorder.debugObject(target))
             addProperty("simulatedPlayerPos", simulatedPlayerPos.toString())
@@ -180,27 +153,15 @@ object CriticalsJump : Choice("Jump") {
 
         GenericDebugRecorder.debugEntityIn(target, ticksTillCrit.toInt())
 
-        val simulatedFallingPlayer = if (onGround) {
-            FallingPlayer(
-                player,
-                player.x,
-                player.y,
-                player.z,
-                player.velocity.x,
-                player.velocity.y + initialMotionY,
-                player.velocity.z,
-                player.yaw
-            )
-        } else {
-            FallingPlayer.fromPlayer(player)
-        }
-
-        val collision = simulatedFallingPlayer.findCollision((ticksTillCrit + 5.0f).toInt())
-        if (collision != null && collision.tick < ticksTillFall.toInt()) {
+        if (damageOnCrit <= damageLostWaiting) {
             return false
         }
 
-        return true
+        if (FallingPlayer.fromPlayer(player).findCollision((ticksTillCrit * 1.3f).toInt()) == null) {
+            return true
+        }
+
+        return false
     }
 
     private fun calculateTicksUntilNextCrit(): Float {

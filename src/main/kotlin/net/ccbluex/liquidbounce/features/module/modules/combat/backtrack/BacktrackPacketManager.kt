@@ -37,9 +37,6 @@ import net.ccbluex.liquidbounce.utils.client.inGame
  */
 object BacktrackPacketManager : EventListener {
 
-    // Preserve arrival order without replaying an entire latency window in one client tick.
-    private const val MAX_PACKETS_PER_TICK = 32
-
     /**
      * When we process packets, we want the delayed ones to be processed first before
      * the game proceeds with its own packet processing.
@@ -65,9 +62,10 @@ object BacktrackPacketManager : EventListener {
             clear()
         }
 
-        repeat(MAX_PACKETS_PER_TICK) {
-            val packet = packetProcessQueue.poll() ?: return@repeat
-            handlePacket(packet)
+        packetProcessQueue.removeIf {
+            handlePacket(it)
+
+            return@removeIf true
         }
 
         if (arePacketQueuesEmpty) {

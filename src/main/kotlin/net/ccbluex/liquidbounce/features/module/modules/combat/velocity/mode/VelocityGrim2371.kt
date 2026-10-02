@@ -29,7 +29,6 @@ import net.ccbluex.liquidbounce.event.sequenceHandler
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.utils.raycast
 import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
-import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.minecraft.network.packet.Packet
 import net.minecraft.network.packet.c2s.common.CommonPongC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket
@@ -50,7 +49,6 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
 
     private var waitForPing = false
     private var waitForUpdate = false
-    private var damageWindowUntil = 0L
 
     private var hitResult: BlockHitResult? = null
     private var shouldSkip = false
@@ -69,23 +67,15 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
     }
 
     override fun disable() {
-        cancelNextVelocity = false
-        delay = false
-        needClick = false
-        waitForPing = false
-        waitForUpdate = false
-        damageWindowUntil = 0L
-        hitResult = null
-        shouldSkip = false
-        freezeTicks = 0
+        PacketQueueManager.flush(TransferOrigin.INCOMING)
     }
 
     private val Packet<*>.isSelfDamage
         get() = this is EntityDamageS2CPacket && this.entityId == player.id
 
     private val Packet<*>.isSelfVelocity
-        get() = (this is EntityVelocityUpdateS2CPacket && this.entityId == player.id) ||
-            (this is ExplosionS2CPacket && this.playerKnockback.isPresent)
+        get() = this is EntityVelocityUpdateS2CPacket && this.entityId == player.id
+            || this is ExplosionS2CPacket
 
     @Suppress("unused")
     private val packetHandler = sequenceHandler<PacketEvent> { event ->
@@ -120,28 +110,14 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             return@sequenceHandler
         }
 
-        // Match velocity only to a recent self-damage packet.
-        val now = System.currentTimeMillis()
-        if (cancelNextVelocity && now > damageWindowUntil) {
-            cancelNextVelocity = false
-            damageWindowUntil = 0L
-        }
-
+        // Check for damage to make sure it will only cancel damage velocity (that all we need),
+        // and not affect other types of velocity
         if (packet.isSelfDamage) {
             cancelNextVelocity = true
-            damageWindowUntil = now + 750L
         } else if (cancelNextVelocity && event.packet.isSelfVelocity) {
-            // Do not compete with a queue that another module already owns.
-            if (PacketQueueManager.isLagging || ModuleScaffold.running) {
-                cancelNextVelocity = false
-                damageWindowUntil = 0L
-                return@sequenceHandler
-            }
-
             event.cancelEvent()
             delay = true
             cancelNextVelocity = false
-            damageWindowUntil = 0L
             needClick = true
         }
     }
@@ -152,16 +128,7 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             return@handler
         }
 
-        val packet = event.packet ?: return@handler
-        val relevant = when (packet) {
-            is EntityVelocityUpdateS2CPacket -> packet.entityId == player.id
-            is ExplosionS2CPacket -> packet.playerKnockback.isPresent
-            else -> false
-        }
-
-        if (relevant) {
-            event.action = PacketQueueManager.Action.QUEUE
-        }
+        event.action = PacketQueueManager.Action.QUEUE
     }
 
     @Suppress("unused")
@@ -176,6 +143,8 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
 
         if (hitResult != null) {
             delay = false
+
+            PacketQueueManager.flush(TransferOrigin.INCOMING)
 
             if (interaction.interactBlock(player, Hand.MAIN_HAND, hitResult).isAccepted) {
                 player.swingHand(Hand.MAIN_HAND)
@@ -211,9 +180,7 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             if (freezeTicks > MAX_FREEZE_TICKS) {
                 waitForUpdate = false
                 waitForPing = false
-                delay = false
                 needClick = false
-                freezeTicks = 0
             }
         }
 

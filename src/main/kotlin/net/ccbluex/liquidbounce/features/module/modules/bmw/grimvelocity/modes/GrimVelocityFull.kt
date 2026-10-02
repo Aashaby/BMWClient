@@ -12,7 +12,6 @@ import net.ccbluex.liquidbounce.event.tickUntil
 import net.ccbluex.liquidbounce.event.waitTicks
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.GrimVelocityMode
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
-import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.utils.raycast
@@ -27,9 +26,13 @@ import net.minecraft.network.packet.Packet
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket
+import net.minecraft.network.packet.s2c.common.CommonPingS2CPacket
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityDamageS2CPacket
+import net.minecraft.network.packet.s2c.play.EntityPositionS2CPacket
+import net.minecraft.network.packet.s2c.play.EntityPositionSyncS2CPacket
+import net.minecraft.network.packet.s2c.play.EntityS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
 import net.minecraft.network.packet.s2c.play.ExplosionS2CPacket
 import net.minecraft.network.packet.s2c.play.GameJoinS2CPacket
@@ -114,11 +117,13 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
                     delay = false
                 }
 
-                is EntityVelocityUpdateS2CPacket -> {
-                    if (packet.entityId == player.id) {
-                        event.cancelEvent()
-                        delayedPacketQueue.add(packet)
-                    }
+                is EntityVelocityUpdateS2CPacket,
+                is CommonPingS2CPacket,
+                is EntityS2CPacket,
+                is EntityPositionS2CPacket,
+                is EntityPositionSyncS2CPacket -> {
+                    event.cancelEvent()
+                    delayedPacketQueue.add(packet)
                 }
             }
 
@@ -131,7 +136,10 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
             canCancel = true
         }
 
-        if (packet is EntityVelocityUpdateS2CPacket && packet.entityId == player.id && canCancel) {
+        if (((packet is EntityVelocityUpdateS2CPacket && packet.entityId == player.id)
+                || packet is ExplosionS2CPacket)
+            && canCancel
+        ) {
             val hitResult = raycast(rotation = Rotation(player.yaw, 90f))
             val pos = hitResult.blockPos.offset(hitResult.side)
             val blockState = world.getBlockState(hitResult.blockPos)
@@ -192,7 +200,7 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
             }
         }
 
-        if (waitForUpdate && !ModuleScaffold.running) {
+        if (waitForUpdate) {
             event.cancelEvent()
         }
 
