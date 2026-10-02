@@ -30,9 +30,8 @@ import net.ccbluex.liquidbounce.event.events.WorldRenderEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.tickHandler
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.GrimVelocityMode
-import net.ccbluex.liquidbounce.bmw.PlacementManager
-import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleFreeze
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.features.module.modules.player.nofall.modes.NoFallGrim
 import net.ccbluex.liquidbounce.render.drawBox
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
@@ -94,7 +93,7 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
 
     private var delaying = false
     private var damage = false
-    private var damageWindowUntil = 0L
+    private var damageUntil = 0L
     private var delayTicks = 0
     private var jump = false
     private var target: Entity? = null
@@ -107,7 +106,7 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
     override fun disable() {
         delaying = false
         damage = false
-        damageWindowUntil = 0L
+        damageUntil = 0L
         delayTicks = 0
         jump = false
         target = null
@@ -173,7 +172,6 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
                 }
 
                 is EntityVelocityUpdateS2CPacket -> {
-                    // Only queue the velocity packet that belongs to us.
                     if (packet.entityId == player.id) {
                         event.cancelEvent()
                         packets.add(packet)
@@ -184,20 +182,22 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
             return@handler
         }
 
+        val now = System.currentTimeMillis()
+        if (damage && now > damageUntil) {
+            damage = false
+            damageUntil = 0L
+        }
+
         if (pause) return@handler
 
         if (packet is EntityDamageS2CPacket && packet.entityId == player.id) {
             damage = true
-            damageWindowUntil = System.currentTimeMillis() + 750L
+            damageUntil = now + 750L
         }
 
-        if (damage &&
-            packet is EntityVelocityUpdateS2CPacket &&
-            packet.entityId == player.id &&
-            System.currentTimeMillis() <= damageWindowUntil &&
-            !ModuleFreeze.running &&
-            !PlacementManager.working
-        ) {
+        if (damage && packet is EntityVelocityUpdateS2CPacket && packet.entityId == player.id) {
+            damage = false
+            damageUntil = 0L
             if (!requireKillAura || (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null)) {
                 if (mode.activeChoice != DelayInAir || !player.isOnGround) {
                     delayTicks = when (mode.activeChoice) {
@@ -219,7 +219,6 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
                 }
             }
             damage = false
-            damageWindowUntil = 0L
         }
     }
 
@@ -254,6 +253,7 @@ object GrimVelocityDelay : GrimVelocityMode("Delay") {
                 && mc.currentScreen !is GenericContainerScreen
                 && player.isOnGround
                 && !(NoFallGrim.running && NoFallGrim.jumping)
+                && !ModuleScaffold.running
             ) {
                 event.jump = true
             }

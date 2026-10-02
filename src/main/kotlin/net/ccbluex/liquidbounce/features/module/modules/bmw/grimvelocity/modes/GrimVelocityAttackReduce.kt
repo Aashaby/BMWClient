@@ -81,16 +81,11 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
     }
 
     private val attackMode by enumChoice("AttackMode", AttackMode.PER_TICK)
-    /**
-     * Never emit an attack before the vanilla client attack cooldown is ready.
-     * This is especially important for burst mode, where a queued burst would otherwise
-     * turn into several same-tick attack packets.
-     */
+
+    /** Never emit queued attacks faster than the normal client cooldown when enabled. */
     private val respectAttackCooldown by boolean("RespectAttackCooldown", true)
-    /**
-     * The server-side velocity is authoritative. Keep local velocity untouched by default so
-     * the client simulation does not drift away from the velocity packet we just received.
-     */
+
+    /** Keep the client-side velocity untouched by default; server velocity remains authoritative. */
     private val clientVelocityReduction by boolean("ClientVelocityReduction", false)
     private val attackTargetRange by float("AttackTargetRange", 3f, 0f..6f)
     private val alinkInAir by boolean("AlinkInAir", true)
@@ -118,6 +113,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
 
         val canRotate: Boolean
             get() = enabled
+                && !ModuleScaffold.running
                 && (!notDuringKillAura
                 || !ModuleKillAura.running
                 || ModuleKillAura.targetTracker.target == null)
@@ -401,7 +397,6 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
                     renderTargetPos = TrackedPosition().apply { pos = renderTarget!!.pos }
                 }
                 alinkTicks = alinkMaxDelay
-                jumpResetDecided = false
                 event.cancelEvent()
                 packets.add(packet)
             } else if (target != null) {
@@ -435,9 +430,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
 
             when (attackMode) {
                 AttackMode.ONE_TIME -> {
-                    if (!canAttackNow()) {
-                        return@tickHandler
-                    }
+                    if (!canAttackNow()) return@tickHandler
 
                     if (!player.isSprinting) {
                         if (debug) {
@@ -466,9 +459,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
                 }
 
                 AttackMode.PER_TICK -> {
-                    if (!canAttackNow()) {
-                        return@tickHandler
-                    }
+                    if (!canAttackNow()) return@tickHandler
 
                     if (target!!.boxedDistanceTo(player) > attackTargetRange) {
                         if (debug) {
@@ -523,8 +514,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
             if (debug) {
                 notifyAsMessage(ModuleGrimVelocity, "Finish alink ($reason)")
             }
-            // A server correction/timeout invalidates the queued combat state. Never carry
-            // the old attack burst across a flag, teleport, or failed replay.
+            // A correction/timeout invalidates the queued combat state.
             reset()
             jumpResetStep = JumpResetStep.NONE
             jumpResetDecided = false

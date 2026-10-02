@@ -71,18 +71,21 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
     override fun disable() {
         cancelNextVelocity = false
         delay = false
+        needClick = false
         waitForPing = false
         waitForUpdate = false
         damageWindowUntil = 0L
-        PacketQueueManager.flush(TransferOrigin.INCOMING)
+        hitResult = null
+        shouldSkip = false
+        freezeTicks = 0
     }
 
     private val Packet<*>.isSelfDamage
         get() = this is EntityDamageS2CPacket && this.entityId == player.id
 
     private val Packet<*>.isSelfVelocity
-        get() = this is EntityVelocityUpdateS2CPacket && this.entityId == player.id
-            || this is ExplosionS2CPacket
+        get() = (this is EntityVelocityUpdateS2CPacket && this.entityId == player.id) ||
+            (this is ExplosionS2CPacket && this.playerKnockback.isPresent)
 
     @Suppress("unused")
     private val packetHandler = sequenceHandler<PacketEvent> { event ->
@@ -92,8 +95,7 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             is PlayerInteractEntityC2SPacket, is PlayerInteractBlockC2SPacket ->
                 shouldSkip = true
 
-            is PlayerMoveC2SPacket if packet.changesPosition() && waitForUpdate &&
-                !ModuleScaffold.running && !ModuleScaffold.isTowering ->
+            is PlayerMoveC2SPacket if packet.changesPosition() && waitForUpdate ->
                 event.cancelEvent()
 
             is CommonPongC2SPacket if waitForPing -> {
@@ -118,8 +120,7 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             return@sequenceHandler
         }
 
-        // Check for damage to make sure it will only cancel damage velocity (that all we need),
-        // and not affect other types of velocity
+        // Match velocity only to a recent self-damage packet.
         val now = System.currentTimeMillis()
         if (cancelNextVelocity && now > damageWindowUntil) {
             cancelNextVelocity = false
@@ -129,7 +130,14 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
         if (packet.isSelfDamage) {
             cancelNextVelocity = true
             damageWindowUntil = now + 750L
-        } else if (cancelNextVelocity && event.packet.isSelfVelocity && now <= damageWindowUntil) {
+        } else if (cancelNextVelocity && event.packet.isSelfVelocity) {
+            // Do not compete with a queue that another module already owns.
+            if (PacketQueueManager.isLagging || ModuleScaffold.running) {
+                cancelNextVelocity = false
+                damageWindowUntil = 0L
+                return@sequenceHandler
+            }
+
             event.cancelEvent()
             delay = true
             cancelNextVelocity = false
@@ -140,25 +148,20 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
 
     @Suppress("unused")
     private val queuePacketHandler = handler<QueuePacketEvent> { event ->
-        if (event.origin != TransferOrigin.INCOMING || waitForUpdate || !delay) {
+        if (waitForUpdate || !delay || event.origin != TransferOrigin.INCOMING) {
             return@handler
         }
 
-        // Keep unrelated world/entity packets live. Only hold the packets that can carry
-        // knockback for this player; delaying everything else is a major source of replay bursts.
-        if (event.packet == null || event.packet !is EntityVelocityUpdateS2CPacket && event.packet !is ExplosionS2CPacket) {
-            return@handler
+        val packet = event.packet ?: return@handler
+        val relevant = when (packet) {
+            is EntityVelocityUpdateS2CPacket -> packet.entityId == player.id
+            is ExplosionS2CPacket -> packet.playerKnockback.isPresent
+            else -> false
         }
 
-        if (event.packet is EntityVelocityUpdateS2CPacket && event.packet.entityId != player.id) {
-            return@handler
+        if (relevant) {
+            event.action = PacketQueueManager.Action.QUEUE
         }
-
-        if (event.packet is ExplosionS2CPacket && !event.packet.playerKnockback.isPresent) {
-            return@handler
-        }
-
-        event.action = PacketQueueManager.Action.QUEUE
     }
 
     @Suppress("unused")
@@ -173,8 +176,6 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
 
         if (hitResult != null) {
             delay = false
-
-            PacketQueueManager.flush(TransferOrigin.INCOMING)
 
             if (interaction.interactBlock(player, Hand.MAIN_HAND, hitResult).isAccepted) {
                 player.swingHand(Hand.MAIN_HAND)
@@ -199,19 +200,15 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             }
 
             freezeTicks = 0
-            waitForUpdate = !ModuleScaffold.running && !ModuleScaffold.isTowering
+            waitForUpdate = true
             hitResult = null
             needClick = false
         }
 
         if (waitForUpdate) {
-            if (!ModuleScaffold.running && !ModuleScaffold.isTowering) {
-                event.cancelEvent()
-            }
+            event.cancelEvent()
             freezeTicks++
             if (freezeTicks > MAX_FREEZE_TICKS) {
-                // Never leave the velocity packet stranded in the global queue.
-                PacketQueueManager.flush(TransferOrigin.INCOMING)
                 waitForUpdate = false
                 waitForPing = false
                 delay = false

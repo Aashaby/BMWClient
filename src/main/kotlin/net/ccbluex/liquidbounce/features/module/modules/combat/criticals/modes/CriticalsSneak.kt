@@ -27,19 +27,20 @@ import net.ccbluex.liquidbounce.event.events.MovementInputEvent
 import net.ccbluex.liquidbounce.event.events.PlayerTickEvent
 import net.ccbluex.liquidbounce.event.events.SprintEvent
 import net.ccbluex.liquidbounce.event.handler
+import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
 import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAutoClicker
+import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.allowsCriticalHit
+import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.modes
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
-import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack
-import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
 import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.ccbluex.liquidbounce.utils.input.InputTracker.isPressedOnAny
 import net.ccbluex.liquidbounce.utils.input.InputTracker.wasPressedRecently
-import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.modes
-import net.ccbluex.liquidbounce.utils.client.MovePacketType
-import net.minecraft.entity.LivingEntity
 import net.minecraft.util.hit.EntityHitResult
+import net.ccbluex.liquidbounce.utils.client.MovePacketType
+import net.ccbluex.liquidbounce.utils.combat.shouldBeAttacked
+import net.minecraft.entity.LivingEntity
 import net.minecraft.util.math.Direction
 
 /**
@@ -98,8 +99,8 @@ object CriticalsSneak : Choice("Sneak") {
     private val sneakTimeout by float("SneakTimeout", 0f, 0f..2f, "s")
 
     /**
-     * Request one normal client jump after the first eligible ground attack. The
-     * request is deliberately not repeated while the same jump cycle is active.
+     * Automatically requests one normal jump for an eligible attack sequence. It is disabled
+     * automatically whenever another module owns movement or an incoming packet queue.
      */
     private val autoJump by boolean("AutoJump", true)
 
@@ -144,30 +145,31 @@ object CriticalsSneak : Choice("Sneak") {
     }
 
     private fun hasAttackIntent(): Boolean {
-        val hasTarget = mc.crosshairTarget is EntityHitResult ||
-            (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null)
+        val hasTarget = (mc.crosshairTarget as? EntityHitResult)?.entity?.shouldBeAttacked() == true ||
+            (ModuleKillAura.running && ModuleKillAura.targetTracker.target?.shouldBeAttacked() == true)
 
         return hasTarget && (
             mc.options.attackKey.isPressedOnAny ||
                 mc.options.attackKey.wasPressedRecently(150) ||
-                (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null) ||
+                (ModuleKillAura.running && ModuleKillAura.targetTracker.target?.shouldBeAttacked() == true) ||
                 (ModuleAutoClicker.running && ModuleAutoClicker.attack)
             )
     }
+
+    private fun movementIsOwnedElsewhere(): Boolean =
+        ModuleScaffold.running ||
+            PacketQueueManager.isLagging || ModuleBacktrack.isLagging() ||
+            ModuleGrimVelocity.shouldStopBacktrack
 
     private fun shouldPrepareAutoJump(): Boolean =
         autoJump &&
             player.isOnGround &&
             player.hurtTime == 0 &&
             player.getAttackCooldownProgress(0.5f) > 0.9f &&
-            !ModuleScaffold.running &&
-            !ModuleScaffold.isTowering &&
+            !movementIsOwnedElsewhere() &&
             !autoJumpWasAirborne &&
-            autoJumpPending.not() &&
-            hasAttackIntent() &&
-            !PacketQueueManager.isLagging &&
-            !ModuleBacktrack.isLagging() &&
-            !ModuleGrimVelocity.shouldStopBacktrack
+            !autoJumpPending &&
+            hasAttackIntent()
 
     @Suppress("unused")
     private val attackHandler = handler<AttackEntityEvent> { event ->
@@ -193,10 +195,7 @@ object CriticalsSneak : Choice("Sneak") {
             !momentumSentThisAirborne &&
             player.getAttackCooldownProgress(0.5f) > 0.9f &&
             allowsCriticalHit(true) &&
-            !ModuleScaffold.running &&
-            !PacketQueueManager.isLagging &&
-            !ModuleBacktrack.isLagging() &&
-            !ModuleGrimVelocity.shouldStopBacktrack
+            !movementIsOwnedElsewhere()
         ) {
             sendPacketMomentum()
             momentumSentThisAirborne = true
@@ -247,17 +246,12 @@ object CriticalsSneak : Choice("Sneak") {
 
         // Crouched and off ground → force the small downwards momentum. Only in states in which a
         // critical hit can happen at all, so flying, vehicles, water, ladders, ... are not affected.
-        if (momentumSource == MomentumSource.CLIENT &&
-            sneaking &&
-            player.isSneaking &&
+        if (momentumSource == MomentumSource.CLIENT && sneaking && player.isSneaking &&
             !player.isOnGround &&
             player.fallDistance > 0f &&
             player.velocity.y <= 0.0 &&
             allowsCriticalHit(true) &&
-            !ModuleScaffold.running &&
-            !PacketQueueManager.isLagging &&
-            !ModuleBacktrack.isLagging() &&
-            !ModuleGrimVelocity.shouldStopBacktrack
+            !movementIsOwnedElsewhere()
         ) {
             val velocity = player.velocity
 
@@ -284,12 +278,8 @@ object CriticalsSneak : Choice("Sneak") {
         if (autoJumpPending &&
             hasAttackIntent() &&
             player.isOnGround &&
-            !ModuleScaffold.running &&
-            !ModuleScaffold.isTowering &&
-            player.hurtTime == 0 &&
-            !PacketQueueManager.isLagging &&
-            !ModuleBacktrack.isLagging() &&
-            !ModuleGrimVelocity.shouldStopBacktrack
+            !movementIsOwnedElsewhere() &&
+            player.hurtTime == 0
         ) {
             event.jump = true
             autoJumpPending = false

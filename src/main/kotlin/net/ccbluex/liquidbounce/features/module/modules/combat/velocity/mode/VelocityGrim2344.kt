@@ -42,7 +42,6 @@ import net.minecraft.network.packet.s2c.play.ExplosionS2CPacket
 internal object VelocityGrim2344 : VelocityMode("Grim2344-117") {
 
     private var alternativeBypass by boolean("AlternativeBypass", true)
-    private val movementPacketCount by int("MovementPacketCount", 1, 1..4)
 
     private var canCancel = false
 
@@ -64,7 +63,7 @@ internal object VelocityGrim2344 : VelocityMode("Grim2344-117") {
             && canCancel) {
             event.cancelEvent()
             waitTicks(1)
-            repeat(if (alternativeBypass) movementPacketCount else 1) {
+            repeat(if (alternativeBypass) 4 else 1) {
                 network.sendPacket(
                     Full(
                         player.x, player.y, player.z, player.yaw, player.pitch, player.isOnGround,

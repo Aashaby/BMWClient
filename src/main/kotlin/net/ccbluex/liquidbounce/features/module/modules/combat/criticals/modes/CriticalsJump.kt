@@ -30,6 +30,9 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAutoClicker
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.allowsCriticalHit
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
+import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
+import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.ccbluex.liquidbounce.features.module.modules.misc.debugrecorder.modes.GenericDebugRecorder
 import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
@@ -79,6 +82,13 @@ object CriticalsJump : Choice("Jump") {
             return@handler
         }
 
+        // Do not compete with movement/lag owners. A jump request created here can otherwise
+        // land in the same tick as Scaffold, Velocity, or a queued movement correction.
+        if (ModuleScaffold.running ||
+            PacketQueueManager.isLagging || ModuleGrimVelocity.shouldStopBacktrack) {
+            return@handler
+        }
+
         if (optimizeForCooldown && shouldWaitForJump()) {
             return@handler
         }
@@ -109,7 +119,7 @@ object CriticalsJump : Choice("Jump") {
 
     /**
      * Decide whether KillAura should wait for the falling portion of a jump for a critical hit.
-     * The triggerer mirrors the upstream 2026-08 improvement while keeping BMW's 1.21.4 mappings.
+     * The calculation is deliberately conservative around movement queue ownership.
      */
     @Suppress("CognitiveComplexMethod", "LongMethod")
     fun shouldWaitForCrit(target: Entity, ignoreState: Boolean = false): Boolean {
@@ -117,38 +127,36 @@ object CriticalsJump : Choice("Jump") {
             return false
         }
 
-        if (player.isGliding) {
+        if (player.isGliding || ModuleScaffold.running ||
+            PacketQueueManager.isLagging || ModuleGrimVelocity.shouldStopBacktrack) {
             return false
         }
 
-        // Check generic critical conditions but allow the calculation while on the ground.
         if (!allowsCriticalHit(ignoreOnGround = true)) {
             return false
         }
 
         val onGround = player.isOnGround
-        val isJumping = player.input.jumping || adjustNextJump
+        val jumpRequested = mc.options.jumpKey.isPressed || adjustNextJump
 
-        // Standing still on the ground without a jump request does not need a delayed attack.
-        if (onGround && !isJumping) {
+        // Do not make a normal ground attack wait for a crit unless a jump is actually being
+        // requested. CriticalsJump itself creates that request from MovementInputEvent.
+        if (onGround && !jumpRequested) {
             return false
         }
 
         val nextPossibleCrit = calculateTicksUntilNextCrit()
 
-        // Already falling: either the cooldown is ready now, or check whether it becomes ready
-        // before the next collision. This prevents waiting past the useful critical window.
         if (!onGround && player.velocity.y <= 0.0) {
             if (player.fallDistance > 0.0 && player.getAttackCooldownProgress(0.5f) > 0.9f) {
                 return false
             }
 
-            val collision = FallingPlayer.fromPlayer(player).findCollision((nextPossibleCrit + 1.0f).toInt())
+            val collision = FallingPlayer.fromPlayer(player)
+                .findCollision((nextPossibleCrit + 1.0f).toInt())
             return collision == null || collision.tick >= nextPossibleCrit.toInt()
         }
 
-        // Rising or beginning a normal jump: simulate the intended jump motion and ensure the
-        // player has enough air time to reach the falling critical window.
         val initialMotionY = if (onGround) height.toDouble() else player.velocity.y
         val gravity = 0.08
         val ticksTillFall = (initialMotionY / gravity).toFloat()
