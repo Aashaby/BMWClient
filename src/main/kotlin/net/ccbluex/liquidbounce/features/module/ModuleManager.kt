@@ -330,7 +330,6 @@ object ModuleManager : EventListener, Collection<ClientModule> by modules {
             ModuleTerrainSpeed,
             ModuleVehicleBoost,
             ModuleVehicleControl,
-            ModuleTridentBoost,
             ModuleSpider,
             ModuleTargetStrafe,
             ModuleAnchor,

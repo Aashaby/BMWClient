@@ -25,7 +25,6 @@ object KillAuraRotationsConfigurable : RotationsConfigurable(ModuleKillAura, com
 
     val rotationTiming by enumChoice("RotationTiming", KillAuraRotationTiming.NORMAL)
     val aimThroughWalls by boolean("ThroughWalls", false)
-    val lazyRotation by boolean("LazyRotation", false)
 
     enum class KillAuraRotationTiming(override val choiceName: String) : NamedChoice {
         NORMAL("Normal"),

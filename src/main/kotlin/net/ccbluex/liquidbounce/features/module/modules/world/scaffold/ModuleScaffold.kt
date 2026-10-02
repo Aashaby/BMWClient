@@ -24,13 +24,13 @@ import net.ccbluex.fastutil.component2
 import net.ccbluex.liquidbounce.config.types.NamedChoice
 import net.ccbluex.liquidbounce.config.types.nesting.ToggleableConfigurable
 import net.ccbluex.liquidbounce.event.EventManager
+import net.ccbluex.liquidbounce.event.waitTicks
 import net.ccbluex.liquidbounce.event.events.BlockCountChangeEvent
 import net.ccbluex.liquidbounce.event.events.MovementInputEvent
 import net.ccbluex.liquidbounce.event.events.RotationUpdateEvent
 import net.ccbluex.liquidbounce.event.events.WorldChangeEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.event.tickHandler
-import net.ccbluex.liquidbounce.event.waitTicks
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.ClientModule
 import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleSafeWalk
@@ -175,10 +175,6 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
             false
         }
     private var wasTowering: Boolean = false
-
-    /** Use the normal technique while towering, regardless of the selected bridge technique. */
-    private val activeTechnique
-        get() = if (isTowering) ScaffoldNormalTechnique else technique.activeChoice
 
     /** Tracks the physical jump-key edge so holding jump does not continuously reset Scaffold state. */
     private var jumpKeyWasPressed: Boolean = false
@@ -359,7 +355,11 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
             ModuleDebug.DebuggedPoint(predictedPos, Color4b(0, 255, 0, 255), size = 0.1)
         }
 
-        val technique = activeTechnique
+        val technique = if (isTowering) {
+            ScaffoldNormalTechnique
+        } else {
+            technique.activeChoice
+        }
 
         val target = technique.findPlacementTarget(predictedPos, predictedPose, optimalLine, bestStack)
             .also { this.currentTarget = it }
@@ -424,7 +424,11 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
 
         // Ledge feature - AutoJump and AutoSneak
         if (ledge) {
-            val technique = activeTechnique
+            val technique = if (isTowering) {
+                ScaffoldNormalTechnique
+            } else {
+                technique.activeChoice
+            }
 
             val ledgeAction = ledge(
                 this.currentTarget,
@@ -488,14 +492,18 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
         val target = currentTarget
 
 
-        val technique = activeTechnique
+        val computedRotation = if (target != null) {
+            technique.activeChoice.getRotations(target)
+        } else {
+            null
+        }
 
         val currentRotation = if ((rotationTiming == ON_TICK || rotationTiming == ON_TICK_SNAP) && target != null) {
-            technique.getRotations(target) ?: (RotationManager.currentRotation ?: player.rotation)
+            computedRotation ?: (RotationManager.currentRotation ?: player.rotation)
         } else {
             RotationManager.currentRotation ?: player.rotation
         }.normalize()
-        val currentCrosshairTarget = technique.getCrosshairTarget(target, currentRotation)
+        val currentCrosshairTarget = technique.activeChoice.getCrosshairTarget(target, currentRotation)
         val currentDelay = delay.random()
 
         var hasBlockInMainHand = isValidBlock(player.inventory.getStack(player.inventory.selectedSlot))
@@ -510,24 +518,11 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
             isValidBlock(player.getStackInHand(it))
         }
 
-        fun commonPlaceSucceed(placed: BlockPos) {
-            ScaffoldMovementPlanner.trackPlacedBlock(placed)
-            renderer.addBlock(placed)
-            ScaffoldEagleFeature.onBlockPlacement()
-            ScaffoldBlinkFeature.onBlockPlacement()
-            ScaffoldSprintControlFeature.onBlockPlacement()
-        }
-
         if (simulatePlacementAttempts(currentCrosshairTarget, suitableHand) && player.moving
             && SimulatePlacementAttempts.clicker.isClickTick
         ) {
             SimulatePlacementAttempts.clicker.click {
-                val crosshairTarget = currentCrosshairTarget ?: return@click false
-                val hand = suitableHand ?: return@click false
-                doPlacement(crosshairTarget, hand, {
-                    commonPlaceSucceed(crosshairTarget.blockPos.offset(crosshairTarget.side))
-                    true
-                }, swingMode = swingMode)
+                doPlacement(currentCrosshairTarget!!, suitableHand!!, swingMode = swingMode)
                 true
             }
         }
@@ -583,7 +578,8 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
         val previousFallOffPos = currentOptimalLine?.let { l -> ScaffoldMovementPrediction.getFallOffPositionOnLine(l) }
 
         doPlacement(currentCrosshairTarget, handToInteractWith, {
-            commonPlaceSucceed(target.placedBlock)
+            ScaffoldMovementPlanner.trackPlacedBlock(target)
+            renderer.addBlock(target.placedBlock)
             currentTarget = null
 
             wasSuccessful = true
@@ -601,6 +597,9 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
 
         if (wasSuccessful) {
             ScaffoldMovementPrediction.onPlace(currentOptimalLine, previousFallOffPos)
+            ScaffoldEagleFeature.onBlockPlacement()
+            ScaffoldBlinkFeature.onBlockPlacement()
+            ScaffoldSprintControlFeature.onBlockPlacement()
 
             waitTicks(currentDelay)
         }
@@ -646,15 +645,20 @@ object ModuleScaffold : ClientModule("Scaffold", Category.WORLD) {
         return true
     }
 
-    internal fun getTargetedPosition(blockPos: BlockPos) = when {
-        isTowering || wasTowering -> towerMode.activeChoice.getTargetedPosition(blockPos)
-        ScaffoldDownFeature.running && ScaffoldDownFeature.shouldGoDown ->
-            blockPos.add(0, -2, 0)
-        ScaffoldCeilingFeature.running && ScaffoldCeilingFeature.canConstructCeiling() ->
-            blockPos.add(0, 3, 0)
-        player.input.playerInput.jump && (!player.moving || player.horizontalCollision) ->
-            blockPos.add(0, -1, 0)
-        else -> sameYMode.getTargetedBlockPos(blockPos)
+    internal fun getTargetedPosition(blockPos: BlockPos): BlockPos {
+        if (isTowering || wasTowering) {
+            return towerMode.activeChoice.getTargetedPosition(blockPos)
+        }
+
+        if (ScaffoldDownFeature.running && ScaffoldDownFeature.shouldGoDown) {
+            return blockPos.add(0, -2, 0)
+        }
+
+        if (ScaffoldCeilingFeature.canConstructCeiling() && ScaffoldCeilingFeature.enabled) {
+            return blockPos.add(0, 3, 0)
+        }
+
+        return sameYMode.getTargetedBlockPos(blockPos)
             ?: blockPos.add(0, -1, 0)
     }
 

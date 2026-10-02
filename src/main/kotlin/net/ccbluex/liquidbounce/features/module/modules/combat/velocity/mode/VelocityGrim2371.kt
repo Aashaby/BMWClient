@@ -29,6 +29,7 @@ import net.ccbluex.liquidbounce.event.sequenceHandler
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.utils.raycast
 import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.minecraft.network.packet.Packet
 import net.minecraft.network.packet.c2s.common.CommonPongC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket
@@ -49,6 +50,7 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
 
     private var waitForPing = false
     private var waitForUpdate = false
+    private var damageWindowUntil = 0L
 
     private var hitResult: BlockHitResult? = null
     private var shouldSkip = false
@@ -67,6 +69,11 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
     }
 
     override fun disable() {
+        cancelNextVelocity = false
+        delay = false
+        waitForPing = false
+        waitForUpdate = false
+        damageWindowUntil = 0L
         PacketQueueManager.flush(TransferOrigin.INCOMING)
     }
 
@@ -85,7 +92,8 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             is PlayerInteractEntityC2SPacket, is PlayerInteractBlockC2SPacket ->
                 shouldSkip = true
 
-            is PlayerMoveC2SPacket if packet.changesPosition() && waitForUpdate ->
+            is PlayerMoveC2SPacket if packet.changesPosition() && waitForUpdate &&
+                !ModuleScaffold.running && !ModuleScaffold.isTowering ->
                 event.cancelEvent()
 
             is CommonPongC2SPacket if waitForPing -> {
@@ -112,19 +120,41 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
 
         // Check for damage to make sure it will only cancel damage velocity (that all we need),
         // and not affect other types of velocity
+        val now = System.currentTimeMillis()
+        if (cancelNextVelocity && now > damageWindowUntil) {
+            cancelNextVelocity = false
+            damageWindowUntil = 0L
+        }
+
         if (packet.isSelfDamage) {
             cancelNextVelocity = true
-        } else if (cancelNextVelocity && event.packet.isSelfVelocity) {
+            damageWindowUntil = now + 750L
+        } else if (cancelNextVelocity && event.packet.isSelfVelocity && now <= damageWindowUntil) {
             event.cancelEvent()
             delay = true
             cancelNextVelocity = false
+            damageWindowUntil = 0L
             needClick = true
         }
     }
 
     @Suppress("unused")
     private val queuePacketHandler = handler<QueuePacketEvent> { event ->
-        if (waitForUpdate || !delay || event.origin != TransferOrigin.INCOMING) {
+        if (event.origin != TransferOrigin.INCOMING || waitForUpdate || !delay) {
+            return@handler
+        }
+
+        // Keep unrelated world/entity packets live. Only hold the packets that can carry
+        // knockback for this player; delaying everything else is a major source of replay bursts.
+        if (event.packet == null || event.packet !is EntityVelocityUpdateS2CPacket && event.packet !is ExplosionS2CPacket) {
+            return@handler
+        }
+
+        if (event.packet is EntityVelocityUpdateS2CPacket && event.packet.entityId != player.id) {
+            return@handler
+        }
+
+        if (event.packet is ExplosionS2CPacket && !event.packet.playerKnockback.isPresent) {
             return@handler
         }
 
@@ -169,18 +199,24 @@ internal object VelocityGrim2371 : VelocityMode("Grim2371") {
             }
 
             freezeTicks = 0
-            waitForUpdate = true
+            waitForUpdate = !ModuleScaffold.running && !ModuleScaffold.isTowering
             hitResult = null
             needClick = false
         }
 
         if (waitForUpdate) {
-            event.cancelEvent()
+            if (!ModuleScaffold.running && !ModuleScaffold.isTowering) {
+                event.cancelEvent()
+            }
             freezeTicks++
             if (freezeTicks > MAX_FREEZE_TICKS) {
+                // Never leave the velocity packet stranded in the global queue.
+                PacketQueueManager.flush(TransferOrigin.INCOMING)
                 waitForUpdate = false
                 waitForPing = false
+                delay = false
                 needClick = false
+                freezeTicks = 0
             }
         }
 

@@ -34,6 +34,7 @@ import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.render.renderEnvironmentForWorld
 import net.ccbluex.liquidbounce.render.withPositionRelativeToCamera
 import net.ccbluex.liquidbounce.utils.client.Chronometer
+import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.ccbluex.liquidbounce.utils.client.PacketSnapshot
 import net.ccbluex.liquidbounce.utils.combat.findEnemy
 import net.ccbluex.liquidbounce.utils.combat.shouldBeAttacked
@@ -88,6 +89,9 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
     val delayedPacketQueue = Queues.newConcurrentLinkedQueue<PacketSnapshot>()
     val packetProcessQueue = Queues.newConcurrentLinkedQueue<Packet<*>>()
 
+    // Keep packet order, but do not replay an entire latency buffer inside one client tick.
+    private const val MAX_REPLAY_PACKETS_PER_TICK = 64
+
     private val chronometer = Chronometer()
     private val trackingBufferChronometer = Chronometer()
     private val attackChronometer = Chronometer()
@@ -108,12 +112,11 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
             return@handler
         }
 
-        if (arePacketQueuesEmpty && !shouldCancelPackets()) {
-            return@handler
-        }
-
         val packet = event.packet
 
+        // Session-critical packets must be handled before any queue-ownership check.
+        // Otherwise a competing lag owner could keep stale Backtrack packets around
+        // across a server teleport/disconnect/death transition.
         when (packet) {
             // Ignore message-related packets
             is ChatMessageC2SPacket, is GameMessageS2CPacket, is CommandExecutionC2SPacket -> {
@@ -140,6 +143,12 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
                     return@handler
                 }
             }
+        }
+
+        // Never stack a second incoming queue behind another lag owner.
+        // This is especially important while ScaffoldBlink / another queue is active.
+        if (PacketQueueManager.isLagging || ModuleGrimVelocity.shouldStopBacktrack || !shouldCancelPackets()) {
+            return@handler
         }
 
         // Update box position with these packets
@@ -291,20 +300,15 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
         shouldPause = enemy is LivingEntity && enemy.hurtTime >= PauseOnHurtTime.hurtTime
 
         if (!shouldBacktrack(enemy)) {
-            // Attack mode has no periodic target selector. If this attack is
-            // not eligible for backtracking, discard the previous target so
-            // stale incoming packets are not kept behind.
-            if (targetMode == Mode.ATTACK) {
-                clear()
-            }
+            // Do not synchronously flush here. The packet-process phase owns
+            // the transition so a click cannot turn a 100-150ms queue into a
+            // same-tick packet burst.
             return
         }
 
         // Reset on enemy change
         if (enemy != target) {
             clear(resetChronometer = false)
-            trackingBufferChronometer.reset()
-            currentDelay = delay.random()
 
             // Instantly set new position, so it does not look like the box was created with delay
             position = TrackedPosition().apply { this.pos = enemy.trackedPosition.pos }
@@ -331,11 +335,22 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
         }
     }
 
+    /** Replay a bounded number of packets in arrival order per tick. */
+    fun processQueuedPackets(maxPackets: Int = MAX_REPLAY_PACKETS_PER_TICK) {
+        repeat(maxPackets) {
+            val packet = packetProcessQueue.poll() ?: return
+            handlePacket(packet)
+        }
+    }
+
     fun clear(handlePackets: Boolean = true, clearOnly: Boolean = false, resetChronometer: Boolean = true) {
         if (handlePackets && !clearOnly) {
             processPackets(true)
-        } else if (clearOnly) {
+        } else if (clearOnly || !handlePackets) {
+            // A disconnect/world change or fresh enable must discard both queues. Replaying an old
+            // packet after a new network session is strictly worse than losing that stale update.
             delayedPacketQueue.clear()
+            packetProcessQueue.clear()
         }
 
         if (target != null && resetChronometer) {
@@ -360,7 +375,8 @@ object ModuleBacktrack : ClientModule("Backtrack", Category.COMBAT) {
             chronometer.hasElapsed() &&
             !shouldPause() &&
             !attackChronometer.hasElapsed(lastAttackTimeToWork.toLong()) &&
-            !ModuleGrimVelocity.shouldStopBacktrack
+            !ModuleGrimVelocity.shouldStopBacktrack &&
+            !PacketQueueManager.isLagging
     }
 
     fun isLagging() = running && !arePacketQueuesEmpty

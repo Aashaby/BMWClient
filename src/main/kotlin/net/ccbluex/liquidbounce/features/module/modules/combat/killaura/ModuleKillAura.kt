@@ -55,7 +55,6 @@ import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.data.RotationWithVector
 import net.ccbluex.liquidbounce.utils.aiming.point.PointTracker
 import net.ccbluex.liquidbounce.utils.aiming.preference.LeastDifferencePreference
-import net.ccbluex.liquidbounce.utils.aiming.utils.isLookingAtEntity
 import net.ccbluex.liquidbounce.utils.aiming.utils.facingEnemy
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBox
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceEntity
@@ -400,23 +399,6 @@ object ModuleKillAura : ClientModule("KillAura", Category.COMBAT) {
      *  @return The best spot to attack the entity
      */
     private fun findRotation(entity: LivingEntity, range: Double): RotationWithVector? {
-        if (rotations.lazyRotation) {
-            val currentRotation = RotationManager.currentRotation ?: player.rotation
-            val currentHit = isLookingAtEntity(
-                fromEntity = player,
-                toEntity = entity,
-                rotation = currentRotation,
-                range = range,
-                throughWallsRange = wallRange.toDouble(),
-            )
-
-            if (currentHit != null) {
-                debugParameter("Lazy Rotation") { true }
-                return RotationWithVector(currentRotation, currentHit.pos)
-            }
-        }
-
-        debugParameter("Lazy Rotation") { false }
         val eyes = player.eyePos
         val point = pointTracker.findPoint(eyes, entity)
 

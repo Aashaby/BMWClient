@@ -28,6 +28,7 @@ import net.ccbluex.liquidbounce.utils.client.Chronometer
 import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.minecraft.network.packet.Packet
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket
 
 object ScaffoldBlinkFeature : ToggleableConfigurable(ModuleScaffold, "Blink", false) {
 
@@ -52,7 +53,15 @@ object ScaffoldBlinkFeature : ToggleableConfigurable(ModuleScaffold, "Blink", fa
             return@handler
         }
 
-        if (!player.isOnGround || !pulseTimer.hasElapsed(pulseTime)) {
+        // Keep Blink focused on movement. Queuing attacks, block interactions, sprint state or
+        // inventory actions together with movement can reorder game actions when the pulse flushes.
+        // Those packets are deliberately allowed through immediately. During knockback or an
+        // actual downward fall, movement must stay live so void-saving/scaffold recovery is not
+        // hidden behind the blink buffer.
+        if (event.packet is PlayerMoveC2SPacket &&
+            player.hurtTime <= 0 &&
+            (player.isOnGround || player.velocity.y >= -0.08)
+        ) {
             event.action = PacketQueueManager.Action.QUEUE
         }
     }

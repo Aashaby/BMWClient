@@ -59,7 +59,7 @@ private fun BlockPlacer.placeInstant(pos: BlockPos, state: BlockState) {
             listOf(Vec3i.ZERO),
             BlockPlacementTargetFindingOptions.PRIORITIZE_LEAST_BLOCK_DISTANCE,
         ),
-        FaceHandlingOptions(ClickableCenterTargetPositionFactory, considerFacingAwayFaces = wallRange > 0),
+        FaceHandlingOptions(CenterTargetPositionFactory, considerFacingAwayFaces = wallRange > 0),
         stackToPlaceWith = Items.SANDSTONE.defaultStack,
         PlayerLocationOnPlacement(position = player.pos, pose = player.pose),
     )

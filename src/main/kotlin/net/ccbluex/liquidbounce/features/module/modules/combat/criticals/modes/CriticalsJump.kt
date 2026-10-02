@@ -108,9 +108,8 @@ object CriticalsJump : Choice("Jump") {
     }
 
     /**
-     * Sometimes when the player is almost at the highest point of his jump, the KillAura
-     * will try to attack the enemy anyway. To maximise damage, this function is used to determine
-     * whether it is worth to wait for the fall.
+     * Decide whether KillAura should wait for the falling portion of a jump for a critical hit.
+     * The triggerer mirrors the upstream 2026-08 improvement while keeping BMW's 1.21.4 mappings.
      */
     @Suppress("CognitiveComplexMethod", "LongMethod")
     fun shouldWaitForCrit(target: Entity, ignoreState: Boolean = false): Boolean {
@@ -122,39 +121,34 @@ object CriticalsJump : Choice("Jump") {
             return false
         }
 
-        // General critical-hit requirements must hold before considering a delayed crit.
-        // Ignore the current on-ground state because a jump may be triggered this tick.
+        // Check generic critical conditions but allow the calculation while on the ground.
         if (!allowsCriticalHit(ignoreOnGround = true)) {
             return false
         }
 
         val onGround = player.isOnGround
-        val isJumping = player.input.playerInput.jump || adjustNextJump
+        val isJumping = player.input.jumping || adjustNextJump
 
-        // Standing still on the ground without a jump request does not become a critical hit
-        // by waiting; attacking immediately is the correct behavior.
+        // Standing still on the ground without a jump request does not need a delayed attack.
         if (onGround && !isJumping) {
             return false
         }
 
         val nextPossibleCrit = calculateTicksUntilNextCrit()
 
-        // If we are already falling, the relevant question is whether we can land while the
-        // attack cooldown is ready. Waiting past an immediately available crit only hurts timing.
+        // Already falling: either the cooldown is ready now, or check whether it becomes ready
+        // before the next collision. This prevents waiting past the useful critical window.
         if (!onGround && player.velocity.y <= 0.0) {
-            val cooldownProgress =
-                (player.lastAttackedTicks + 0.5f) / player.attackCooldownProgressPerTick
-            if (player.fallDistance > 0.0 && cooldownProgress > 0.9f) {
+            if (player.fallDistance > 0.0 && player.getAttackCooldownProgress(0.5f) > 0.9f) {
                 return false
             }
 
-            val collision = FallingPlayer.fromPlayer(player)
-                .findCollision((nextPossibleCrit + 1.0f).toInt())
+            val collision = FallingPlayer.fromPlayer(player).findCollision((nextPossibleCrit + 1.0f).toInt())
             return collision == null || collision.tick >= nextPossibleCrit.toInt()
         }
 
-        // We are rising (or are about to start a normal jump). Estimate when the player reaches
-        // the falling phase and whether the world gives us a landing point afterwards.
+        // Rising or beginning a normal jump: simulate the intended jump motion and ensure the
+        // player has enough air time to reach the falling critical window.
         val initialMotionY = if (onGround) height.toDouble() else player.velocity.y
         val gravity = 0.08
         val ticksTillFall = (initialMotionY / gravity).toFloat()
@@ -194,7 +188,6 @@ object CriticalsJump : Choice("Jump") {
         }
 
         val collision = simulatedFallingPlayer.findCollision((ticksTillCrit + 5.0f).toInt())
-        // Landing before the expected falling phase means there is no valid crit window to wait for.
         if (collision != null && collision.tick < ticksTillFall.toInt()) {
             return false
         }

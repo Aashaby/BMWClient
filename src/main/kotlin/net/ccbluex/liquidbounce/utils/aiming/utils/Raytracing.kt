@@ -163,42 +163,6 @@ fun facingEnemy(
     return raytraceEntity(range, rotation) { it == toEntity } != null
 }
 
-/**
- * Ray-traces from [fromEntity] and returns a hit only when [toEntity] is the
- * entity actually under the supplied rotation. A wall can be ignored up to
- * [throughWallsRange], matching KillAura's normal range semantics.
- */
-fun isLookingAtEntity(
-    fromEntity: Entity,
-    toEntity: Entity,
-    rotation: Rotation,
-    range: Double,
-    throughWallsRange: Double,
-): EntityHitResult? {
-    val cameraVec = fromEntity.eyePos
-    val rotationVec = rotation.directionVector
-
-    val rangeSquared = range.sq()
-    val throughWallsRangeSquared = throughWallsRange.sq()
-    val end = cameraVec.add(rotationVec.x * range, rotationVec.y * range, rotationVec.z * range)
-    val box = fromEntity.boundingBox.stretch(rotationVec.multiply(range)).expand(1.0, 1.0, 1.0)
-
-    val hit = ProjectileUtil.raycast(
-        fromEntity,
-        cameraVec,
-        end,
-        box,
-        { !it.isSpectator && it.canHit() && it === toEntity },
-        rangeSquared,
-    ) ?: return null
-
-    val distance = cameraVec.squaredDistanceTo(hit.pos)
-    return hit.takeIf {
-        distance <= throughWallsRangeSquared ||
-            distance <= rangeSquared && canSeePointFrom(cameraVec, hit.pos)
-    }
-}
-
 fun facingEnemy(
     fromEntity: Entity = mc.cameraEntity!!,
     toEntity: Entity,

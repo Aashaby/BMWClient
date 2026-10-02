@@ -24,7 +24,6 @@ import net.ccbluex.liquidbounce.features.module.modules.render.ModuleDebug.debug
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
-import net.ccbluex.liquidbounce.utils.aiming.utils.BoxVisibilityPredicate
 import net.ccbluex.liquidbounce.utils.aiming.utils.edgePoints
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.entity.any
@@ -215,60 +214,6 @@ object RandomTargetPositionFactory : FaceTargetPositionFactory() {
 object CenterTargetPositionFactory : FaceTargetPositionFactory() {
     override fun producePositionOnFace(face: AlignedFace, targetPos: BlockPos): Vec3d {
         return face.center
-    }
-}
-
-/**
- * Prefers the face center, but falls back to a small deterministic sample grid
- * when the center is occluded by the block geometry. This keeps rotations and
- * reach checks aligned with an actually clickable point on partial faces.
- */
-object ClickableCenterTargetPositionFactory : FaceTargetPositionFactory() {
-    private val FACE_SAMPLE_PROPORTIONS = doubleArrayOf(
-        0.05, 0.1, 0.175, 0.3, 0.5, 0.7, 0.825, 0.9, 0.95
-    )
-
-    override fun producePositionOnFace(face: AlignedFace, targetPos: BlockPos): Vec3d {
-        val center = face.center
-        return if (BoxVisibilityPredicate.isVisible(player.eyePos, center + Vec3d.of(targetPos))) {
-            center
-        } else {
-            findVisiblePointOnFace(face, targetPos) ?: center
-        }
-    }
-
-    private fun findVisiblePointOnFace(face: AlignedFace, targetPos: BlockPos): Vec3d? {
-        val eyePos = player.eyePos
-        for (a in FACE_SAMPLE_PROPORTIONS) {
-            for (b in FACE_SAMPLE_PROPORTIONS) {
-                val point = samplePointOnFace(face, a, b)
-                if (BoxVisibilityPredicate.isVisible(eyePos, point + Vec3d.of(targetPos))) {
-                    return point
-                }
-            }
-        }
-        return null
-    }
-
-    private fun samplePointOnFace(face: AlignedFace, a: Double, b: Double): Vec3d {
-        val dimensions = face.dimensions
-        return when {
-            dimensions.x == 0.0 -> Vec3d(
-                face.from.x,
-                face.from.y + dimensions.y * a,
-                face.from.z + dimensions.z * b,
-            )
-            dimensions.y == 0.0 -> Vec3d(
-                face.from.x + dimensions.x * a,
-                face.from.y,
-                face.from.z + dimensions.z * b,
-            )
-            else -> Vec3d(
-                face.from.x + dimensions.x * a,
-                face.from.y + dimensions.y * b,
-                face.from.z,
-            )
-        }
     }
 }
 

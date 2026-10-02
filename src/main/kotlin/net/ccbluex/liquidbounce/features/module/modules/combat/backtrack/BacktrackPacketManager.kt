@@ -25,10 +25,10 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleB
 import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.clear
 import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.currentDelay
 import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.delay
-import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.packetProcessQueue
 import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.processPackets
+import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.processQueuedPackets
 import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack.shouldCancelPackets
-import net.ccbluex.liquidbounce.utils.client.handlePacket
+import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
 import net.ccbluex.liquidbounce.utils.client.inGame
 
 /**
@@ -56,17 +56,26 @@ object BacktrackPacketManager : EventListener {
             return@handler
         }
 
+        // Never let Backtrack and the global queue both build a backlog. If another
+        // queue already owns the network timing, finish our existing packets once
+        // and stay out of the way for this tick.
+        if (PacketQueueManager.isLagging) {
+            if (!arePacketQueuesEmpty) {
+                clear()
+            }
+
+            processQueuedPackets()
+            currentDelay = delay.random()
+            return@handler
+        }
+
         if (shouldCancelPackets()) {
             processPackets()
         } else {
             clear()
         }
 
-        packetProcessQueue.removeIf {
-            handlePacket(it)
-
-            return@removeIf true
-        }
+        processQueuedPackets()
 
         if (arePacketQueuesEmpty) {
             currentDelay = delay.random()

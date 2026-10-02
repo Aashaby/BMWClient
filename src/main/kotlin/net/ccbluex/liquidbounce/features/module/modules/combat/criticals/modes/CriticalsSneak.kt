@@ -27,10 +27,19 @@ import net.ccbluex.liquidbounce.event.events.MovementInputEvent
 import net.ccbluex.liquidbounce.event.events.PlayerTickEvent
 import net.ccbluex.liquidbounce.event.events.SprintEvent
 import net.ccbluex.liquidbounce.event.handler
+import net.ccbluex.liquidbounce.features.module.modules.combat.ModuleAutoClicker
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.allowsCriticalHit
+import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
+import net.ccbluex.liquidbounce.features.module.modules.combat.backtrack.ModuleBacktrack
+import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
+import net.ccbluex.liquidbounce.utils.client.PacketQueueManager
+import net.ccbluex.liquidbounce.utils.input.InputTracker.isPressedOnAny
+import net.ccbluex.liquidbounce.utils.input.InputTracker.wasPressedRecently
 import net.ccbluex.liquidbounce.features.module.modules.combat.criticals.ModuleCriticals.modes
 import net.ccbluex.liquidbounce.utils.client.MovePacketType
 import net.minecraft.entity.LivingEntity
+import net.minecraft.util.hit.EntityHitResult
 import net.minecraft.util.math.Direction
 
 /**
@@ -89,6 +98,12 @@ object CriticalsSneak : Choice("Sneak") {
     private val sneakTimeout by float("SneakTimeout", 0f, 0f..2f, "s")
 
     /**
+     * Request one normal client jump after the first eligible ground attack. The
+     * request is deliberately not repeated while the same jump cycle is active.
+     */
+    private val autoJump by boolean("AutoJump", true)
+
+    /**
      * Timestamp of the last attack on an entity, 0 if there was none yet.
      */
     private var lastAttackAt = 0L
@@ -102,6 +117,10 @@ object CriticalsSneak : Choice("Sneak") {
      * Whether the module currently forces the player to sneak.
      */
     private var sneaking = false
+    private var autoJumpPending = false
+    private var autoSequenceUntil = 0L
+    private var autoJumpWasAirborne = false
+    private var momentumSentThisAirborne = false
 
     /**
      * One millionth of a block below the current position: enough for the server to see a fall
@@ -118,7 +137,37 @@ object CriticalsSneak : Choice("Sneak") {
         lastAttackAt = 0L
         sneakAt = 0L
         sneaking = false
+        autoJumpPending = false
+        autoSequenceUntil = 0L
+        autoJumpWasAirborne = false
+        momentumSentThisAirborne = false
     }
+
+    private fun hasAttackIntent(): Boolean {
+        val hasTarget = mc.crosshairTarget is EntityHitResult ||
+            (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null)
+
+        return hasTarget && (
+            mc.options.attackKey.isPressedOnAny ||
+                mc.options.attackKey.wasPressedRecently(150) ||
+                (ModuleKillAura.running && ModuleKillAura.targetTracker.target != null) ||
+                (ModuleAutoClicker.running && ModuleAutoClicker.attack)
+            )
+    }
+
+    private fun shouldPrepareAutoJump(): Boolean =
+        autoJump &&
+            player.isOnGround &&
+            player.hurtTime == 0 &&
+            player.getAttackCooldownProgress(0.5f) > 0.9f &&
+            !ModuleScaffold.running &&
+            !ModuleScaffold.isTowering &&
+            !autoJumpWasAirborne &&
+            autoJumpPending.not() &&
+            hasAttackIntent() &&
+            !PacketQueueManager.isLagging &&
+            !ModuleBacktrack.isLagging() &&
+            !ModuleGrimVelocity.shouldStopBacktrack
 
     @Suppress("unused")
     private val attackHandler = handler<AttackEntityEvent> { event ->
@@ -130,16 +179,27 @@ object CriticalsSneak : Choice("Sneak") {
 
         // The jump key is already held, so the sneak can be scheduled right away. Otherwise the
         // tick handler takes care of it as soon as the jump key is pressed.
-        if (sneakAt == 0L && !sneaking && mc.options.jumpKey.isPressed) {
+        if (sneakAt == 0L && !sneaking && (mc.options.jumpKey.isPressed || autoSequenceUntil > lastAttackAt)) {
             sneakAt = lastAttackAt + (sneakDelay * 1000f).toLong()
         }
 
         // Give the server the tiny fall distance it wants right before the attack packet leaves,
         // which happens right after this event was called.
-        if (momentumSource == MomentumSource.PACKET && sneaking && !player.isOnGround &&
-            allowsCriticalHit(true)
+        if (momentumSource == MomentumSource.PACKET &&
+            sneaking &&
+            !player.isOnGround &&
+            player.fallDistance > 0f &&
+            player.velocity.y <= 0.0 &&
+            !momentumSentThisAirborne &&
+            player.getAttackCooldownProgress(0.5f) > 0.9f &&
+            allowsCriticalHit(true) &&
+            !ModuleScaffold.running &&
+            !PacketQueueManager.isLagging &&
+            !ModuleBacktrack.isLagging() &&
+            !ModuleGrimVelocity.shouldStopBacktrack
         ) {
             sendPacketMomentum()
+            momentumSentThisAirborne = true
         }
     }
 
@@ -148,9 +208,11 @@ object CriticalsSneak : Choice("Sneak") {
         val now = System.currentTimeMillis()
 
         // Releasing the jump key stops the trick.
-        if (!mc.options.jumpKey.isPressed) {
+        val automaticSequence = autoSequenceUntil > now
+        if (!mc.options.jumpKey.isPressed && !automaticSequence) {
             sneakAt = 0L
             sneaking = false
+            autoJumpPending = false
             return@handler
         }
 
@@ -172,10 +234,30 @@ object CriticalsSneak : Choice("Sneak") {
             sneaking = false
         }
 
+        if (!player.isOnGround) {
+            autoJumpWasAirborne = true
+        } else if (autoJumpWasAirborne) {
+            autoJumpWasAirborne = false
+            autoJumpPending = false
+            autoSequenceUntil = 0L
+            sneakAt = 0L
+            sneaking = false
+            momentumSentThisAirborne = false
+        }
+
         // Crouched and off ground → force the small downwards momentum. Only in states in which a
         // critical hit can happen at all, so flying, vehicles, water, ladders, ... are not affected.
-        if (momentumSource == MomentumSource.CLIENT && sneaking && player.isSneaking &&
-            !player.isOnGround && allowsCriticalHit(true)
+        if (momentumSource == MomentumSource.CLIENT &&
+            sneaking &&
+            player.isSneaking &&
+            !player.isOnGround &&
+            player.fallDistance > 0f &&
+            player.velocity.y <= 0.0 &&
+            allowsCriticalHit(true) &&
+            !ModuleScaffold.running &&
+            !PacketQueueManager.isLagging &&
+            !ModuleBacktrack.isLagging() &&
+            !ModuleGrimVelocity.shouldStopBacktrack
         ) {
             val velocity = player.velocity
 
@@ -191,6 +273,29 @@ object CriticalsSneak : Choice("Sneak") {
 
     @Suppress("unused")
     private val inputHandler = handler<MovementInputEvent> { event ->
+        if (shouldPrepareAutoJump()) {
+            autoJumpPending = true
+            autoSequenceUntil = System.currentTimeMillis() + (clickSpan * 1000f).toLong()
+            if (sneakAt == 0L) {
+                sneakAt = System.currentTimeMillis() + (sneakDelay * 1000f).toLong()
+            }
+        }
+
+        if (autoJumpPending &&
+            hasAttackIntent() &&
+            player.isOnGround &&
+            !ModuleScaffold.running &&
+            !ModuleScaffold.isTowering &&
+            player.hurtTime == 0 &&
+            !PacketQueueManager.isLagging &&
+            !ModuleBacktrack.isLagging() &&
+            !ModuleGrimVelocity.shouldStopBacktrack
+        ) {
+            event.jump = true
+            autoJumpPending = false
+            autoJumpWasAirborne = false
+        }
+
         if (sneaking) {
             event.sneak = true
         }

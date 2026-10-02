@@ -12,6 +12,10 @@ import net.ccbluex.liquidbounce.event.tickUntil
 import net.ccbluex.liquidbounce.event.waitTicks
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.GrimVelocityMode
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
+import net.ccbluex.liquidbounce.bmw.PlacementManager
+import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
+import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleFreeze
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
 import net.ccbluex.liquidbounce.utils.aiming.utils.raycast
@@ -21,12 +25,12 @@ import net.ccbluex.liquidbounce.utils.client.handlePacket
 import net.ccbluex.liquidbounce.utils.inventory.InventoryManager
 import net.ccbluex.liquidbounce.utils.kotlin.random
 import net.minecraft.client.gui.screen.ingame.GenericContainerScreen
+import net.minecraft.entity.Entity
 import net.minecraft.item.consume.UseAction
 import net.minecraft.network.packet.Packet
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket
-import net.minecraft.network.packet.s2c.common.CommonPingS2CPacket
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityDamageS2CPacket
@@ -44,16 +48,20 @@ import net.minecraft.util.Hand
 object GrimVelocityFull : GrimVelocityMode("Full") {
 
     private val maxStuckTicks by int("MaxStuckTicks", 5, 1..100, "ticks")
+    private val maxDelayTicks by int("MaxDelayTicks", 12, 1..100, "ticks")
     private val onlyOnGround by boolean("OnlyOnGround", false)
     private val delayInAir by boolean("DelayInAir", true)
 
     private val debug by boolean("Debug", false)
 
     private var canCancel = false
+    private var damageWindowUntil = 0L
     private var delay = false
+    private var delayTicksLeft = 0
     private var needClick = false
     private var waitForUpdate = false
     private var shouldSkip = false
+    private var delayedTarget: Entity? = null
     private val delayedPacketQueue = Queues.newConcurrentLinkedQueue<Packet<*>>()
 
     override val shouldStopBacktrack: Boolean
@@ -61,18 +69,28 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
 
     override fun enable() {
         canCancel = false
+        damageWindowUntil = 0L
         delay = false
+        delayTicksLeft = 0
         needClick = false
         waitForUpdate = false
         shouldSkip = false
+        delayedTarget = null
         delayedPacketQueue.clear()
     }
 
     override fun disable() {
+        canCancel = false
+        damageWindowUntil = 0L
+        delay = false
+        needClick = false
+        waitForUpdate = false
         delayedPacketQueue.removeIf {
             handlePacket(it)
             true
         }
+        delayedTarget = null
+        delayTicksLeft = 0
     }
 
     @Suppress("unused", "DEPRECATION")
@@ -83,7 +101,11 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
             shouldSkip = true
         }
 
-        if (packet is PlayerMoveC2SPacket && packet.changePosition && waitForUpdate) {
+        if (packet is PlayerMoveC2SPacket &&
+            packet.changePosition &&
+            waitForUpdate &&
+            !ModuleScaffold.running
+        ) {
             event.cancelEvent()
         }
 
@@ -110,6 +132,7 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
                 is GameJoinS2CPacket -> {
                     waitForUpdate = false
                     needClick = false
+                    delayedTarget = null
                     delayedPacketQueue.removeIf {
                         handlePacket(it)
                         true
@@ -117,13 +140,20 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
                     delay = false
                 }
 
-                is EntityVelocityUpdateS2CPacket,
-                is CommonPingS2CPacket,
+                is EntityVelocityUpdateS2CPacket -> {
+                    if (packet.entityId == player.id) {
+                        event.cancelEvent()
+                        delayedPacketQueue.add(packet)
+                    }
+                }
+
                 is EntityS2CPacket,
                 is EntityPositionS2CPacket,
                 is EntityPositionSyncS2CPacket -> {
-                    event.cancelEvent()
-                    delayedPacketQueue.add(packet)
+                    if (isDelayedTargetPacket(packet)) {
+                        event.cancelEvent()
+                        delayedPacketQueue.add(packet)
+                    }
                 }
             }
 
@@ -134,11 +164,15 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
 
         if (packet is EntityDamageS2CPacket && packet.entityId == player.id) {
             canCancel = true
+            damageWindowUntil = System.currentTimeMillis() + 750L
         }
 
         if (((packet is EntityVelocityUpdateS2CPacket && packet.entityId == player.id)
-                || packet is ExplosionS2CPacket)
+                || (packet is ExplosionS2CPacket && packet.playerKnockback.isPresent))
             && canCancel
+            && System.currentTimeMillis() <= damageWindowUntil
+            && !ModuleFreeze.running
+            && !PlacementManager.working
         ) {
             val hitResult = raycast(rotation = Rotation(player.yaw, 90f))
             val pos = hitResult.blockPos.offset(hitResult.side)
@@ -154,9 +188,19 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
                 event.cancelEvent()
                 delay = true
                 needClick = true
+                delayTicksLeft = maxDelayTicks
+                delayedTarget = ModuleKillAura.targetTracker.target
             }
             canCancel = false
+            damageWindowUntil = 0L
         }
+    }
+
+    private fun isDelayedTargetPacket(packet: Packet<*>): Boolean = when (packet) {
+        is EntityS2CPacket -> packet.getEntity(world) == delayedTarget
+        is EntityPositionS2CPacket -> packet.entityId == delayedTarget?.id
+        is EntityPositionSyncS2CPacket -> packet.id == delayedTarget?.id
+        else -> false
     }
 
     @Suppress("unused")
@@ -200,7 +244,7 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
             }
         }
 
-        if (waitForUpdate) {
+        if (waitForUpdate && !ModuleScaffold.running) {
             event.cancelEvent()
         }
 
@@ -209,6 +253,23 @@ object GrimVelocityFull : GrimVelocityMode("Full") {
 
     @Suppress("unused")
     private val tickHandler = tickHandler {
+        if (delay) {
+            delayTicksLeft--
+            if (delayTicksLeft <= 0) {
+                if (debug) notifyAsMessage(ModuleGrimVelocity, "Max delay ticks")
+
+                delayedPacketQueue.removeIf {
+                    handlePacket(it)
+                    true
+                }
+
+                delay = false
+                needClick = false
+                delayedTarget = null
+                return@tickHandler
+            }
+        }
+
         tickUntil { waitForUpdate }
 
         repeat(maxStuckTicks) {

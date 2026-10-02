@@ -392,7 +392,7 @@ private fun BestRotationTracker.considerSpot(
     }
     val distance = eyes.squaredDistanceTo(spotOnBox)
 
-    val visible = visibilityPredicate.isVisible(eyes, spotOnBox)
+    val visible = visibilityPredicate.isVisible(eyes, raycastTarget)
 
     // Is either spot visible or distance within wall range?
     if ((!visible || distance >= rangeSquared) && distance >= wallsRangeSquared) {

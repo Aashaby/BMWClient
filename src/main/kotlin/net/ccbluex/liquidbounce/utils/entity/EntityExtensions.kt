@@ -50,8 +50,6 @@ import net.minecraft.entity.effect.StatusEffects
 import net.minecraft.entity.mob.CreeperEntity
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.entity.vehicle.TntMinecartEntity
-import net.minecraft.item.ShieldItem
-import net.minecraft.item.SwordItem
 import net.minecraft.item.consume.UseAction
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket
 import net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket
@@ -108,18 +106,6 @@ fun ClientPlayerEntity.getMovementDirectionOfInput(input: DirectionalInput): Flo
 
 val ClientPlayerEntity.isBlockAction: Boolean
     get() = isUsingItem && activeItem.useAction == UseAction.BLOCK
-
-/**
- * Whether the server-side state should be treated as blocking.
- *
- * On 1.8-era protocol servers reached through ViaFabricPlus, a modern client can be
- * reported as merely using an item even though a sword/shield is interpreted as blocking.
- */
-val ClientPlayerEntity.isBlockingServerside: Boolean
-    get() = isBlockAction || (
-        isOlderThanOrEqual1_8 && isUsingItem &&
-            (activeItem.item is SwordItem || activeItem.item is ShieldItem)
-        )
 
 fun Entity.lastRenderPos() = Vec3d(this.lastRenderX, this.lastRenderY, this.lastRenderZ)
 

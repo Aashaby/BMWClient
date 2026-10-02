@@ -40,7 +40,6 @@ import net.ccbluex.liquidbounce.utils.aiming.features.processors.anglesmooth.imp
 import net.ccbluex.liquidbounce.utils.aiming.point.PointTracker
 import net.ccbluex.liquidbounce.utils.aiming.preference.LeastDifferencePreference
 import net.ccbluex.liquidbounce.utils.aiming.utils.raytraceBox
-import net.ccbluex.liquidbounce.utils.aiming.utils.isLookingAtEntity
 import net.ccbluex.liquidbounce.utils.aiming.utils.setRotation
 import net.ccbluex.liquidbounce.utils.client.Timer
 import net.ccbluex.liquidbounce.utils.combat.TargetPriority
@@ -61,7 +60,6 @@ import net.minecraft.util.math.MathHelper
 object ModuleAimbot : ClientModule("Aimbot", Category.COMBAT, aliases = listOf("AimAssist", "AutoAim")) {
 
     private val range = float("Range", 4.2f, 1f..8f)
-    private val lazyRotation by boolean("LazyRotation", false)
 
     val targetTracker = tree(TargetTracker(TargetPriority.DIRECTION, range = range))
     private val targetRenderer = tree(WorldTargetRenderer(this))
@@ -171,22 +169,6 @@ object ModuleAimbot : ClientModule("Aimbot", Category.COMBAT, aliases = listOf("
 
     private fun findNextTargetRotation(): Pair<Entity, RotationWithVector>? {
         for (entity in targetTracker.targets()) {
-            if (lazyRotation) {
-                val currentRotation = player.rotation
-                val currentHit = isLookingAtEntity(
-                    fromEntity = player,
-                    toEntity = entity,
-                    rotation = currentRotation,
-                    range = targetTracker.maxRange.toDouble(),
-                    throughWallsRange = 0.0,
-                )
-
-                if (currentHit != null) {
-                    targetTracker.target = entity
-                    return entity to RotationWithVector(currentRotation, currentHit.pos)
-                }
-            }
-
             val eyes = player.eyePos
             val point = pointTracker.findPoint(eyes, entity)
 

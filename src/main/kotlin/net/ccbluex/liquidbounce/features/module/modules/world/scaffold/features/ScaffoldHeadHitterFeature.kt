@@ -20,14 +20,11 @@ package net.ccbluex.liquidbounce.features.module.modules.world.scaffold.features
 
 import net.ccbluex.liquidbounce.config.types.nesting.ToggleableConfigurable
 import net.ccbluex.liquidbounce.event.tickHandler
-import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.techniques.ScaffoldNormalTechnique
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.utils.block.getState
 import net.ccbluex.liquidbounce.utils.entity.moving
 
-object ScaffoldHeadHitterFeature : ToggleableConfigurable(ScaffoldNormalTechnique, "HeadHitter", false) {
-    private val jumpDelay by intRange("JumpDelay", 0..0, 0..20, "ticks")
-    private var jumpCooldown = 0
-
+object ScaffoldHeadHitterFeature : ToggleableConfigurable(ModuleScaffold, "HeadHitter", false) {
     fun canHeadHit() =
         run {
             val pos = player.blockPos.add(0, 2, 0)
@@ -36,13 +33,7 @@ object ScaffoldHeadHitterFeature : ToggleableConfigurable(ScaffoldNormalTechniqu
         } && player.isOnGround
 
     val repeatable = tickHandler {
-        if (jumpCooldown > 0) {
-            jumpCooldown--
-            return@tickHandler
-        }
-
         if (canHeadHit() && player.moving) {
-            jumpCooldown = jumpDelay.random()
             player.jump()
         }
     }

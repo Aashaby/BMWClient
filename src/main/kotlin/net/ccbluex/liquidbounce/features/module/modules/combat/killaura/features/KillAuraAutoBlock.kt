@@ -39,10 +39,8 @@ import net.ccbluex.liquidbounce.utils.client.isOlderThanOrEqual1_8
 import net.ccbluex.liquidbounce.utils.client.isOlderThanOrEquals1_7_10
 import net.ccbluex.liquidbounce.utils.combat.shouldBeAttacked
 import net.ccbluex.liquidbounce.utils.entity.isBlockAction
-import net.ccbluex.liquidbounce.utils.entity.isBlockingServerside
 import net.ccbluex.liquidbounce.utils.entity.rotation
 import net.ccbluex.liquidbounce.utils.input.InputTracker.isPressedOnAny
-import net.ccbluex.liquidbounce.utils.item.isSword
 import net.ccbluex.liquidbounce.utils.input.shouldSwingHand
 import net.minecraft.item.ItemStack
 import net.minecraft.item.consume.UseAction
@@ -72,9 +70,6 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
 
     val onScanRange by boolean("OnScanRange", true)
     private val onlyWhenInDanger by boolean("OnlyWhenInDanger", false)
-
-    /** On 1.9~1.21.4 protocol servers, using a sword can be treated as shield blocking. */
-    private val assumeShield by boolean("AssumeShield", false)
 
     private var blockingTicks = 0
 
@@ -259,7 +254,7 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
         }
 
         // We do not want the player to stop eating or else. Only when he blocks.
-        if (!player.isBlockingServerside) {
+        if (!player.isBlockAction) {
             return false
         }
 
@@ -359,8 +354,7 @@ object KillAuraAutoBlock : ToggleableConfigurable(ModuleKillAura, "AutoBlocking"
         // Respect Minecraft's item cooldown before sending a use-item action.
         // Otherwise AutoBlock can desync when an item ability is cooling down.
         return itemStack.item?.getUseAction(itemStack) == UseAction.BLOCK &&
-            !player.itemCooldownManager.isCoolingDown(itemStack) ||
-            assumeShield && !isOlderThanOrEqual1_8 && player.mainHandStack.isSword
+            !player.itemCooldownManager.isCoolingDown(itemStack)
     }
 
     /**

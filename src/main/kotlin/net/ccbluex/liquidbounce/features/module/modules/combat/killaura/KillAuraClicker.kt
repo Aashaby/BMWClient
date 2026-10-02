@@ -41,7 +41,7 @@ import net.ccbluex.liquidbounce.utils.client.network
 import net.ccbluex.liquidbounce.utils.client.player
 import net.ccbluex.liquidbounce.utils.entity.PositionExtrapolation
 import net.ccbluex.liquidbounce.utils.entity.getBoundingBoxAt
-import net.ccbluex.liquidbounce.utils.entity.isBlockingServerside
+import net.ccbluex.liquidbounce.utils.entity.isBlockAction
 import net.ccbluex.liquidbounce.utils.entity.wouldBlockHit
 import net.ccbluex.liquidbounce.utils.inventory.InventoryManager
 import net.ccbluex.liquidbounce.utils.inventory.openInventorySilently
@@ -147,7 +147,7 @@ object KillAuraClicker : Clicker<ModuleKillAura>(
                 network.sendPacket(CloseHandledScreenC2SPacket(0))
             }
 
-            if (player.isBlockingServerside) {
+            if (player.isBlockAction) {
                 if (!KillAuraAutoBlock.enabled && !ModuleMultiActions.mayAttackWhileUsing()) {
                     return true
                 }
