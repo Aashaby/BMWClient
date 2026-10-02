@@ -35,6 +35,7 @@ import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.GrimVel
 import net.ccbluex.liquidbounce.features.module.modules.bmw.grimvelocity.ModuleGrimVelocity
 import net.ccbluex.liquidbounce.features.module.modules.combat.killaura.ModuleKillAura
 import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleFreeze
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
 import net.ccbluex.liquidbounce.render.drawBox
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
 import net.ccbluex.liquidbounce.render.renderEnvironmentForWorld
@@ -60,7 +61,6 @@ import net.minecraft.entity.Entity
 import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.TrackedPosition
 import net.minecraft.network.packet.Packet
-import net.minecraft.network.packet.s2c.common.CommonPingS2CPacket
 import net.minecraft.network.packet.s2c.common.DisconnectS2CPacket
 import net.minecraft.network.packet.s2c.play.*
 import net.minecraft.util.Hand
@@ -81,6 +81,12 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
     }
 
     private val attackMode by enumChoice("AttackMode", AttackMode.PER_TICK)
+
+    /** Never emit queued attacks faster than the normal client cooldown when enabled. */
+    private val respectAttackCooldown by boolean("RespectAttackCooldown", true)
+
+    /** Keep the client-side velocity untouched by default; server velocity remains authoritative. */
+    private val clientVelocityReduction by boolean("ClientVelocityReduction", false)
     private val attackTargetRange by float("AttackTargetRange", 3f, 0f..6f)
     private val alinkInAir by boolean("AlinkInAir", true)
     private val alinkTargetRange by floatRange("AlinkTargetRange", 2f..6f, 0f..20f)
@@ -107,6 +113,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
 
         val canRotate: Boolean
             get() = enabled
+                && !ModuleScaffold.running
                 && (!notDuringKillAura
                 || !ModuleKillAura.running
                 || ModuleKillAura.targetTracker.target == null)
@@ -134,11 +141,13 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
     var attackQueue = 0
         private set
     private var receiveDamage = false
+    private var receiveDamageUntil = 0L
     var alinkTicks = -1
         private set
     private var releaseReason: String? = null
     private var velocity = 0.0
     private var jumpResetStep = JumpResetStep.NONE
+    private var jumpResetDecided = false
     private val packets = Queues.newConcurrentLinkedQueue<Packet<*>>()
 
     override val shouldStopBacktrack: Boolean
@@ -157,6 +166,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
     override fun disable() {
         reset()
         jumpResetStep = JumpResetStep.NONE
+        jumpResetDecided = false
         EventManager.callEvent(AlinkUpdateEvent(0, alinkMaxDelay, false))
     }
 
@@ -166,6 +176,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
         renderTargetPos = null
         attackQueue = 0
         receiveDamage = false
+        receiveDamageUntil = 0L
         alinkTicks = -1
         releaseReason = null
         velocity = 0.0
@@ -245,6 +256,19 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
         if (alinkTicks == -1) renderTarget = targetAround
     }
 
+    private fun canAttackNow(): Boolean =
+        !respectAttackCooldown || player.getAttackCooldownProgress(0.5f) > 0.9f
+
+    private fun reduceClientVelocity() {
+        if (!clientVelocityReduction) return
+
+        player.setVelocity(
+            player.velocity.x * 0.6,
+            player.velocity.y,
+            player.velocity.z * 0.6
+        )
+    }
+
     private fun getCurrentAttackCount(): Int {
         if (!autoAttackCount) return attackCount.random()
 
@@ -282,51 +306,66 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
                 }
 
                 is EntityS2CPacket -> {
-                    event.cancelEvent()
-                    packets.add(packet)
-                    if (renderTargetPos != null && packet.getEntity(world) == renderTarget) {
-                        renderTargetPos!!.pos = renderTargetPos!!.withDelta(
-                            packet.deltaX.toLong(),
-                            packet.deltaY.toLong(),
-                            packet.deltaZ.toLong()
-                        )
+                    if (packet.getEntity(world) == renderTarget) {
+                        event.cancelEvent()
+                        packets.add(packet)
+                        if (renderTargetPos != null) {
+                            renderTargetPos!!.pos = renderTargetPos!!.withDelta(
+                                packet.deltaX.toLong(),
+                                packet.deltaY.toLong(),
+                                packet.deltaZ.toLong()
+                            )
+                        }
                     }
                 }
 
                 is EntityPositionS2CPacket -> {
-                    event.cancelEvent()
-                    packets.add(packet)
-                    if (renderTargetPos != null && packet.entityId == renderTarget?.id) {
-                        renderTargetPos!!.pos = packet.change.position.copy()
+                    if (packet.entityId == renderTarget?.id) {
+                        event.cancelEvent()
+                        packets.add(packet)
+                        if (renderTargetPos != null) {
+                            renderTargetPos!!.pos = packet.change.position.copy()
+                        }
                     }
                 }
 
                 is EntityPositionSyncS2CPacket -> {
-                    event.cancelEvent()
-                    packets.add(packet)
-                    if (renderTargetPos != null && packet.id == renderTarget?.id) {
-                        renderTargetPos!!.pos = packet.values.position()
+                    if (packet.id == renderTarget?.id) {
+                        event.cancelEvent()
+                        packets.add(packet)
+                        if (renderTargetPos != null) {
+                            renderTargetPos!!.pos = packet.values.position()
+                        }
                     }
                 }
 
-                is EntityVelocityUpdateS2CPacket,
-                is CommonPingS2CPacket -> {
-                    event.cancelEvent()
-                    packets.add(packet)
+                is EntityVelocityUpdateS2CPacket -> {
+                    if (packet.entityId == player.id) {
+                        event.cancelEvent()
+                        packets.add(packet)
+                    }
                 }
             }
 
             return@handler
         }
 
+        val now = System.currentTimeMillis()
+        if (receiveDamage && now > receiveDamageUntil) {
+            receiveDamage = false
+            receiveDamageUntil = 0L
+        }
+
         if (pause) return@handler
 
         if (packet is EntityDamageS2CPacket && packet.entityId == player.id) {
             receiveDamage = true
+            receiveDamageUntil = now + 750L
         }
 
         if (packet is EntityVelocityUpdateS2CPacket && packet.entityId == player.id && receiveDamage) {
             receiveDamage = false
+            receiveDamageUntil = 0L
 
             if (ModuleFreeze.running
                 || !(!requireKillAura || ModuleKillAura.running)
@@ -391,6 +430,8 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
 
             when (attackMode) {
                 AttackMode.ONE_TIME -> {
+                    if (!canAttackNow()) return@tickHandler
+
                     if (!player.isSprinting) {
                         if (debug) {
                             notifyAsMessage(ModuleGrimVelocity, "Not sprinting")
@@ -399,23 +440,27 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
                         return@tickHandler
                     }
 
-                    for (i in 1..attackQueue) {
-                        if (target !in world.entities) break
+                    val attacksThisTick = if (respectAttackCooldown) 1 else attackQueue
+                    repeat(attacksThisTick) {
+                        if (target !in world.entities) return@repeat
 
                         player.isSprinting = false
                         interaction.attackEntity(player, target!!)
                         player.swingHand(Hand.MAIN_HAND)
-                        player.setVelocity(
-                            player.velocity.x * 0.6,
-                            player.velocity.y,
-                            player.velocity.z * 0.6
-                        )
+                        reduceClientVelocity()
                     }
 
-                    reset()
+                    if (respectAttackCooldown) {
+                        attackQueue--
+                        if (attackQueue <= 0) reset()
+                    } else {
+                        reset()
+                    }
                 }
 
                 AttackMode.PER_TICK -> {
+                    if (!canAttackNow()) return@tickHandler
+
                     if (target!!.boxedDistanceTo(player) > attackTargetRange) {
                         if (debug) {
                             notifyAsMessage(ModuleGrimVelocity, "Unable to attack")
@@ -445,11 +490,7 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
                     player.isSprinting = false
                     interaction.attackEntity(player, target!!)
                     player.swingHand(Hand.MAIN_HAND)
-                    player.setVelocity(
-                        player.velocity.x * 0.6,
-                        player.velocity.y,
-                        player.velocity.z * 0.6
-                    )
+                    reduceClientVelocity()
 
                     attackQueue--
                     if (attackQueue == 0) {
@@ -462,42 +503,48 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
 
     @Suppress("unused")
     private val tickPacketProcessEventHandler = handler<TickPacketProcessEvent> {
-        if (releaseReason != null) {
-            packets.removeIf {
-                handlePacket(it)
-                true
-            }
+        val reason = releaseReason ?: return@handler
 
+        packets.removeIf {
+            handlePacket(it)
+            true
+        }
+
+        if (reason.isNotEmpty()) {
             if (debug) {
-                if (releaseReason!!.isEmpty()) {
-                    notifyAsMessage(ModuleGrimVelocity, "Finish alink")
-                    notifyAsMessage(ModuleGrimVelocity, "Attack count: $attackQueue")
-                } else {
-                    notifyAsMessage(ModuleGrimVelocity, "Finish alink ($releaseReason)")
-                    reset()
-                }
+                notifyAsMessage(ModuleGrimVelocity, "Finish alink ($reason)")
             }
+            // A correction/timeout invalidates the queued combat state.
+            reset()
+            jumpResetStep = JumpResetStep.NONE
+            jumpResetDecided = false
+            return@handler
+        }
 
-            alinkTicks = -1
-            renderTarget = null
-            renderTargetPos = null
-            releaseReason = null
+        if (debug) {
+            notifyAsMessage(ModuleGrimVelocity, "Finish alink")
+            notifyAsMessage(ModuleGrimVelocity, "Attack count: $attackQueue")
+        }
 
-            if (jumpResetStep == JumpResetStep.SHOULD_JUMP) {
-                jumpResetStep = if (jumpReset.onlyPressJumpKey) {
-                    JumpResetStep.NONE
-                } else {
-                    JumpResetStep.JUMP
-                }
-            } else if (jumpResetStep == JumpResetStep.NO_JUMP) {
-                jumpResetStep = JumpResetStep.NONE
+        alinkTicks = -1
+        renderTarget = null
+        renderTargetPos = null
+        releaseReason = null
+
+        if (jumpResetStep == JumpResetStep.SHOULD_JUMP) {
+            jumpResetStep = if (jumpReset.onlyPressJumpKey) {
+                JumpResetStep.NONE
+            } else {
+                JumpResetStep.JUMP
             }
+        } else if (jumpResetStep == JumpResetStep.NO_JUMP) {
+            jumpResetStep = JumpResetStep.NONE
         }
     }
 
     @Suppress("unused")
     private val movementInputEventHandler = handler<MovementInputEvent> { event ->
-        if (attackQueue > 0) {
+        if (attackQueue > 0 && !ModuleScaffold.running && event.directionalInput == DirectionalInput.NONE) {
             event.directionalInput = DirectionalInput(
                 forwards = true,
                 backwards = false,
@@ -523,12 +570,14 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
             } else if (target != null && (!alinkInAir || !isInAir)) {
                 attackQueue = getCurrentAttackCount()
                 releaseReason = ""
-                event.directionalInput = DirectionalInput(
-                    forwards = true,
-                    backwards = false,
-                    left = false,
-                    right = false
-                )
+                if (!ModuleScaffold.running) {
+                    event.directionalInput = DirectionalInput(
+                        forwards = true,
+                        backwards = false,
+                        left = false,
+                        right = false
+                    )
+                }
             }
 
             if (releaseReason != null && releaseReason!!.isNotEmpty()) {
@@ -538,7 +587,8 @@ object GrimVelocityAttackReduce : GrimVelocityMode("AttackReduce") {
             }
         }
 
-        if (releaseReason != null && jumpReset.enabled) {
+        if (releaseReason != null && jumpReset.enabled && !jumpResetDecided) {
+            jumpResetDecided = true
             val shouldJump = (1..100).random() <= jumpReset.chance
             if (shouldJump) {
                 jumpResetStep = JumpResetStep.SHOULD_JUMP
