@@ -72,7 +72,7 @@ class InterpolationAngleSmooth(
         ModuleDebug.debugParameter(this, "Pitch Diff", pitchDiff)
 
         val directionChange = RotationManager.previousRotationTarget.takeIf { rotationTarget != null }?.run {
-            rotation.angleTo(targetRotation).coerceIn(0f, 1f) * (directionChangeFactor.random().toFloat() / 100.0f)
+            (rotation.angleTo(targetRotation) / 180f).coerceIn(0f, 1f) * (directionChangeFactor.random().toFloat() / 100.0f)
         } ?: 0f
         ModuleDebug.debugParameter(this, "Direction Change", directionChange)
 

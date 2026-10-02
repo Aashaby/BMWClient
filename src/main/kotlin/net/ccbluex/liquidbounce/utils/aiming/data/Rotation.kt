@@ -26,6 +26,7 @@ import net.ccbluex.liquidbounce.utils.entity.rotation
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -92,7 +93,8 @@ data class Rotation(
      * @return angle in degrees
      */
     fun angleTo(other: Rotation): Float {
-        return rotationDeltaTo(other).length().coerceAtMost(180.0F)
+        val cosine = directionVector.dotProduct(other.directionVector).coerceIn(-1.0, 1.0)
+        return Math.toDegrees(acos(cosine)).toFloat()
     }
 
     /**

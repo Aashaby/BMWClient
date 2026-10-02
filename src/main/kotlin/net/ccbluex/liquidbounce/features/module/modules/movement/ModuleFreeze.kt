@@ -54,7 +54,7 @@ import kotlin.random.Random
  */
 object ModuleFreeze : ClientModule("Freeze", Category.MOVEMENT, disableOnQuit = true) {
 
-    private val modes = choices("Mode", Stationary, arrayOf(Queue, Cancel, Stationary))
+    private val modes = choices("Mode", Stationary, arrayOf(Queue, Cancel, Stationary, TickMovement))
         .apply { tagBy(this) }
     private val disableOnFlag by boolean("DisableOnFlag", true)
     private val notification by boolean("Notification", false)
@@ -128,7 +128,7 @@ object ModuleFreeze : ClientModule("Freeze", Category.MOVEMENT, disableOnQuit = 
      */
     @Suppress("unused")
     private val moveHandler = handler<PlayerTickEvent> { event ->
-        if (warpInProgress) return@handler
+        if (warpInProgress || modes.activeChoice === TickMovement) return@handler
 
         event.cancelEvent()
         missedOutTick++
@@ -329,5 +329,33 @@ object ModuleFreeze : ClientModule("Freeze", Category.MOVEMENT, disableOnQuit = 
         }
 
     }
+
+    private object TickMovement : Choice("TickMovement") {
+
+        private val interval by intRange("Interval", 20..20, 1..200, "ticks")
+        private var ticksUntilMovement = 0
+
+        override val parent: ChoiceConfigurable<Choice>
+            get() = modes
+
+        override fun enable() {
+            ticksUntilMovement = interval.random()
+        }
+
+        override fun disable() {
+            ticksUntilMovement = 0
+        }
+
+        @Suppress("unused")
+        private val movementTickHandler = handler<PlayerMovementTickEvent> { event ->
+            if (--ticksUntilMovement <= 0) {
+                ticksUntilMovement = interval.random()
+                return@handler
+            }
+
+            event.cancelEvent()
+        }
+    }
+
 
 }

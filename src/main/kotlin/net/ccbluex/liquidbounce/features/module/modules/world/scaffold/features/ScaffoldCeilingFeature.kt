@@ -19,10 +19,10 @@
 package net.ccbluex.liquidbounce.features.module.modules.world.scaffold.features
 
 import net.ccbluex.liquidbounce.config.types.nesting.ToggleableConfigurable
-import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
+import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.techniques.ScaffoldNormalTechnique
 import net.ccbluex.liquidbounce.utils.block.getState
 
-object ScaffoldCeilingFeature : ToggleableConfigurable(ModuleScaffold, "Ceiling", false) {
+object ScaffoldCeilingFeature : ToggleableConfigurable(ScaffoldNormalTechnique, "Ceiling", false) {
     fun canConstructCeiling(): Boolean {
         // World/block-state lookup can be unavailable during a world transition.
         // Treat that as "cannot construct" instead of crashing the scaffold tick.

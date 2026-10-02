@@ -112,6 +112,7 @@ object CriticalsJump : Choice("Jump") {
      * will try to attack the enemy anyway. To maximise damage, this function is used to determine
      * whether it is worth to wait for the fall.
      */
+    @Suppress("CognitiveComplexMethod", "LongMethod")
     fun shouldWaitForCrit(target: Entity, ignoreState: Boolean = false): Boolean {
         if (!isActive() && !ignoreState) {
             return false
@@ -121,17 +122,43 @@ object CriticalsJump : Choice("Jump") {
             return false
         }
 
-        if (!allowsCriticalHit() || player.velocity.y < -0.08) {
+        // General critical-hit requirements must hold before considering a delayed crit.
+        // Ignore the current on-ground state because a jump may be triggered this tick.
+        if (!allowsCriticalHit(ignoreOnGround = true)) {
+            return false
+        }
+
+        val onGround = player.isOnGround
+        val isJumping = player.input.playerInput.jump || adjustNextJump
+
+        // Standing still on the ground without a jump request does not become a critical hit
+        // by waiting; attacking immediately is the correct behavior.
+        if (onGround && !isJumping) {
             return false
         }
 
         val nextPossibleCrit = calculateTicksUntilNextCrit()
+
+        // If we are already falling, the relevant question is whether we can land while the
+        // attack cooldown is ready. Waiting past an immediately available crit only hurts timing.
+        if (!onGround && player.velocity.y <= 0.0) {
+            val cooldownProgress =
+                (player.lastAttackedTicks + 0.5f) / player.attackCooldownProgressPerTick
+            if (player.fallDistance > 0.0 && cooldownProgress > 0.9f) {
+                return false
+            }
+
+            val collision = FallingPlayer.fromPlayer(player)
+                .findCollision((nextPossibleCrit + 1.0f).toInt())
+            return collision == null || collision.tick >= nextPossibleCrit.toInt()
+        }
+
+        // We are rising (or are about to start a normal jump). Estimate when the player reaches
+        // the falling phase and whether the world gives us a landing point afterwards.
+        val initialMotionY = if (onGround) height.toDouble() else player.velocity.y
         val gravity = 0.08
-        val ticksTillFall = (player.velocity.y / gravity).toFloat()
+        val ticksTillFall = (initialMotionY / gravity).toFloat()
         val ticksTillCrit = nextPossibleCrit.coerceAtLeast(ticksTillFall)
-        val hitProbability = 0.75f
-        val damageOnCrit = 0.5f * hitProbability
-        val damageLostWaiting = getCooldownDamageFactor(player, ticksTillCrit)
 
         val (simulatedPlayerPos, simulatedTargetPos) = if (target is PlayerEntity) {
             predictPlayerPos(target, ticksTillCrit.toInt())
@@ -143,8 +170,6 @@ object CriticalsJump : Choice("Jump") {
 
         GenericDebugRecorder.recordDebugInfo(ModuleCriticals, "critEstimation", JsonObject().apply {
             addProperty("ticksTillCrit", ticksTillCrit)
-            addProperty("damageOnCrit", damageOnCrit)
-            addProperty("damageLostWaiting", damageLostWaiting)
             add("player", GenericDebugRecorder.debugObject(player))
             add("target", GenericDebugRecorder.debugObject(target))
             addProperty("simulatedPlayerPos", simulatedPlayerPos.toString())
@@ -153,15 +178,28 @@ object CriticalsJump : Choice("Jump") {
 
         GenericDebugRecorder.debugEntityIn(target, ticksTillCrit.toInt())
 
-        if (damageOnCrit <= damageLostWaiting) {
+        val simulatedFallingPlayer = if (onGround) {
+            FallingPlayer(
+                player,
+                player.x,
+                player.y,
+                player.z,
+                player.velocity.x,
+                player.velocity.y + initialMotionY,
+                player.velocity.z,
+                player.yaw
+            )
+        } else {
+            FallingPlayer.fromPlayer(player)
+        }
+
+        val collision = simulatedFallingPlayer.findCollision((ticksTillCrit + 5.0f).toInt())
+        // Landing before the expected falling phase means there is no valid crit window to wait for.
+        if (collision != null && collision.tick < ticksTillFall.toInt()) {
             return false
         }
 
-        if (FallingPlayer.fromPlayer(player).findCollision((ticksTillCrit * 1.3f).toInt()) == null) {
-            return true
-        }
-
-        return false
+        return true
     }
 
     private fun calculateTicksUntilNextCrit(): Float {

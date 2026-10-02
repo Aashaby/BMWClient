@@ -129,10 +129,12 @@ object ModuleSprint : ClientModule("Sprint", Category.MOVEMENT) {
 
         val hasForwardMovement = forward * deltaYawRad.fastCos() + sideways * deltaYawRad.fastSin() > 1.0E-5
 
-        return (if (player.isOnGround) StopOn.GROUND in stopOn else StopOn.AIR in stopOn)
-            && !shouldSprintOmnidirectional
-            && RotationManager.activeRotationTarget?.movementCorrection == MovementCorrection.OFF
-            && !hasForwardMovement
+        return (
+            (if (player.isOnGround) StopOn.GROUND in stopOn else StopOn.AIR in stopOn)
+                && !shouldSprintOmnidirectional
+                && RotationManager.activeRotationTarget?.movementCorrection == MovementCorrection.OFF
+                && !hasForwardMovement
+            ) || StopOn.SNEAKING in stopOn && player.isSneaking
     }
 
     private enum class Ignore(override val choiceName: String) : NamedChoice {
@@ -144,5 +146,6 @@ object ModuleSprint : ClientModule("Sprint", Category.MOVEMENT) {
     private enum class StopOn(override val choiceName: String) : NamedChoice {
         GROUND("Ground"),
         AIR("Air"),
+        SNEAKING("Sneaking"),
     }
 }

@@ -28,7 +28,6 @@ import net.ccbluex.liquidbounce.features.module.modules.movement.noslow.modes.sh
 import net.ccbluex.liquidbounce.features.module.modules.movement.noslow.modes.shared.NoSlowSharedInvalidHand
 import net.ccbluex.liquidbounce.utils.client.InteractionTracker.isBlocking
 import net.ccbluex.liquidbounce.utils.client.inGame
-import net.minecraft.item.consume.UseAction
 
 internal object NoSlowBlock : NoSlowUseActionHandler("Blocking") {
 
@@ -64,7 +63,7 @@ internal object NoSlowBlock : NoSlowUseActionHandler("Blocking") {
             }
 
             // Check if we are using a block item
-            return (player.isUsingItem && player.activeItem.useAction == UseAction.BLOCK) || isBlocking
+            return player.isBlockingServerside || isBlocking
         }
 
 }

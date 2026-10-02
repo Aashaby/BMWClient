@@ -254,7 +254,7 @@ class BlockPlacer(
                     listOf(Vec3i.ZERO),
                     BlockPlacementTargetFindingOptions.PRIORITIZE_LEAST_BLOCK_DISTANCE,
                 ),
-                FaceHandlingOptions(CenterTargetPositionFactory, considerFacingAwayFaces = wallRange > 0),
+                FaceHandlingOptions(ClickableCenterTargetPositionFactory, considerFacingAwayFaces = wallRange > 0),
                 stackToPlaceWith = itemStack,
                 PlayerLocationOnPlacement(position = player.pos),
             )
